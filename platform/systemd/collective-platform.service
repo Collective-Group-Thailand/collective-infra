@@ -1,0 +1,13 @@
+[Unit]
+Description=Collective platform: refresh secrets and ensure compose stacks are up after boot
+After=docker.service network-online.target cloud-final.service
+Wants=docker.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/collective/platform/bin/bootstrap.sh
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+# Hostnames per product for UAT. bin/render-sites.sh → caddy/sites/<product>.caddy
+getpack:
+  WEB_HOST: uat.getpack.co
+  API_HOST: uat-api.getpack.co
+getproperty:
+  WEB_HOST: uat.getproperty.example # TODO
+  API_HOST: uat-api.getproperty.example
+getpop:
+  API_HOST: uat-api.getpop.example # TODO (web is Flutter → S3/CloudFront, no container)

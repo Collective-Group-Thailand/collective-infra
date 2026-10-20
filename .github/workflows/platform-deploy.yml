@@ -1,0 +1,31 @@
+name: Platform deploy
+
+# platform/** changed on main → UAT box pulls the repo and re-runs bootstrap (compose up with new config).
+# Prod gets the same on manual dispatch (approval via the `production` environment).
+
+on:
+  push:
+    branches: [main]
+    paths: ["platform/**"]
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        options: [uat, production]
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/reusable-ssm-run.yml
+    with:
+      environment: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'uat' }}
+      comment: "platform ${{ github.sha }}"
+      command: |
+        set -euo pipefail
+        cd /opt/collective/infra
+        git fetch --quiet origin && git reset --quiet --hard origin/main
+        bash platform/bin/bootstrap.sh

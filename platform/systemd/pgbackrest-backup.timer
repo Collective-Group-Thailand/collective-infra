@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily pgBackRest backup at 01:30 Asia/Bangkok (before the 02:00 EBS snapshot)
+
+[Timer]
+OnCalendar=*-*-* 01:30:00 Asia/Bangkok
+Persistent=true
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,3 @@
+# Rendered to sites/_platform_users by bin/bootstrap.sh from the platform/caddy secret:
+#   caddy hash-password --plaintext '<pw>'  → bcrypt
+ops $2a$14$REPLACE_WITH_BCRYPT_HASH

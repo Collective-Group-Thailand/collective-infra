@@ -1,0 +1,10 @@
+[Unit]
+Description=pgBackRest backup (full on Sunday, diff otherwise)
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/collective/platform/bin/backup.sh auto
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

@@ -1,0 +1,130 @@
+name: Terraform
+
+# PR  → fmt + validate + plan for every root touched (plan posted as a PR comment)
+# main → apply global → uat → prod; prod apply waits for approval in the `production` GitHub Environment.
+
+on:
+  pull_request:
+    paths: ["envs/**", "modules/**", ".github/workflows/terraform.yml"]
+  push:
+    branches: [main]
+    paths: ["envs/**", "modules/**", ".github/workflows/terraform.yml"]
+  workflow_dispatch:
+    inputs:
+      root:
+        description: "Root to apply"
+        type: choice
+        options: [global, uat, prod]
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+env:
+  TF_VERSION: "1.13.3"
+  AWS_REGION: ap-southeast-7
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "0"
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "${{ env.TF_VERSION }}" }
+      - run: terraform fmt -check -recursive -diff
+
+  plan:
+    needs: fmt
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        root: [global, uat, prod]
+    environment: terraform-plan # holds AWS_TERRAFORM_ROLE_ARN; no approval
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "${{ env.TF_VERSION }}", terraform_wrapper: false }
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Write backend.hcl
+        run: |
+          cat > envs/backend.hcl <<EOF
+          bucket       = "${{ vars.TF_STATE_BUCKET }}"
+          region       = "${{ env.AWS_REGION }}"
+          encrypt      = true
+          use_lockfile = true
+          EOF
+      - name: Init + validate
+        working-directory: envs/${{ matrix.root }}
+        run: |
+          terraform init -backend-config=../backend.hcl
+          terraform validate
+      - name: Plan
+        id: plan
+        working-directory: envs/${{ matrix.root }}
+        run: |
+          set +e
+          terraform plan -no-color -lock-timeout=120s -out=tfplan -detailed-exitcode > plan.txt 2>&1
+          echo "exitcode=$?" >> "$GITHUB_OUTPUT"
+          tail -c 60000 plan.txt > plan.tail
+      - name: Comment plan on PR
+        uses: actions/github-script@v7
+        env:
+          ROOT: ${{ matrix.root }}
+          EXIT: ${{ steps.plan.outputs.exitcode }}
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync(`envs/${process.env.ROOT}/plan.tail`, 'utf8');
+            const status = { '0': 'no changes', '2': 'changes', '1': 'ERROR' }[process.env.EXIT] ?? 'unknown';
+            const marker = `<!-- tfplan:${process.env.ROOT} -->`;
+            const { data: comments } = await github.rest.issues.listComments({ ...context.repo, issue_number: context.issue.number });
+            const prev = comments.find(c => c.body.includes(marker));
+            const text = `${marker}\n### terraform plan — \`${process.env.ROOT}\` → **${status}**\n<details><summary>output</summary>\n\n\`\`\`\n${body}\n\`\`\`\n</details>`;
+            if (prev) await github.rest.issues.updateComment({ ...context.repo, comment_id: prev.id, body: text });
+            else await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body: text });
+      - name: Fail on plan error
+        if: steps.plan.outputs.exitcode == '1'
+        run: exit 1
+
+  apply:
+    needs: fmt
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 1
+      matrix:
+        root: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.root)) || fromJSON('["global","uat","prod"]') }}
+    # `terraform-prod` requires a reviewer in repo Settings → Environments; the others auto-approve.
+    environment: ${{ matrix.root == 'prod' && 'terraform-prod' || 'terraform-apply' }}
+    concurrency: terraform-${{ matrix.root }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "${{ env.TF_VERSION }}", terraform_wrapper: false }
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Write backend.hcl
+        run: |
+          cat > envs/backend.hcl <<EOF
+          bucket       = "${{ vars.TF_STATE_BUCKET }}"
+          region       = "${{ env.AWS_REGION }}"
+          encrypt      = true
+          use_lockfile = true
+          EOF
+      - name: Apply
+        working-directory: envs/${{ matrix.root }}
+        run: |
+          terraform init -backend-config=../backend.hcl
+          terraform apply -auto-approve -lock-timeout=300s
+          terraform output

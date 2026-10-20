@@ -1,0 +1,89 @@
+# getpop on the shared box. Deployed with: bin/deploy-product.sh getpop <tag>
+# Env files (merged by compose_product in bin/lib.sh): /etc/collective/platform.env + /var/lib/collective/getpop.env (IMAGE_TAG)
+# App secrets: /run/collective/getpop.env (rendered from Secrets Manager collective/<env>/getpop/app)
+#
+# Memory budget: api 512M · worker 1G (BOQ/Excel exports) · migrate transient. No web container: Flutter web is static (S3/CloudFront).
+name: getpop
+
+networks:
+  collective:
+    external: true
+
+x-api-base: &api-base
+  image: ${ECR_REGISTRY}/getpop/api:${IMAGE_TAG}
+  env_file: /run/collective/getpop.env
+  environment:
+    NODE_ENV: production
+    PORT: "3000"
+    TZ: Asia/Bangkok
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
+    OTEL_SERVICE_NAMESPACE: getpop
+    AWS_REGION: ${AWS_REGION}
+    S3_BUCKET: collective-${COLLECTIVE_ENV}-getpop-assets
+  networks: [collective]
+  restart: unless-stopped
+  init: false # image already uses tini
+
+services:
+
+  api:
+    <<: *api-base
+    container_name: getpop-api
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      TZ: Asia/Bangkok
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
+      OTEL_SERVICE_NAME: getpop-api
+      AWS_REGION: ${AWS_REGION}
+      S3_BUCKET: collective-${COLLECTIVE_ENV}-getpop-assets
+    deploy:
+      resources:
+        limits: { memory: 512M }
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    labels:
+      collective.metrics: "true"
+      collective.metrics.port: "3000"
+      collective.metrics.path: "/metrics"
+
+  # BullMQ consumers: BOQ takeoff jobs, exports, e-Tax submissions, notifications
+  worker:
+    <<: *api-base
+    container_name: getpop-worker
+    command: ["node", "dist/src/worker.js"]
+    environment:
+      NODE_ENV: production
+      TZ: Asia/Bangkok
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
+      OTEL_SERVICE_NAME: getpop-worker
+      AWS_REGION: ${AWS_REGION}
+      S3_BUCKET: collective-${COLLECTIVE_ENV}-getpop-assets
+      WORKER_CONCURRENCY: "4"
+    deploy:
+      resources:
+        limits: { memory: 1G }
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    labels:
+      collective.metrics: "true"
+      collective.metrics.port: "3001"
+      collective.metrics.path: "/metrics"
+
+  # One-shot: `prisma migrate deploy`. Not started by `up` (profile), only by deploy-product.sh.
+  migrate:
+    <<: *api-base
+    command: ["sh", "-c", "corepack enable >/dev/null 2>&1 || true; npx prisma migrate deploy"]
+    restart: "no"
+    profiles: ["tools"]
+    deploy:
+      resources:
+        limits: { memory: 768M }

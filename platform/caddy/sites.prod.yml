@@ -1,0 +1,8 @@
+getpack:
+  WEB_HOST: getpack.co
+  API_HOST: api.getpack.co
+getproperty:
+  WEB_HOST: app.getproperty.example # TODO
+  API_HOST: api.getproperty.example
+getpop:
+  API_HOST: api.getpop.example # TODO

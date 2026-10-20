@@ -1,0 +1,194 @@
+# Shared platform services for one Collective box. Products attach to the `collective` network
+# and are deployed as separate compose projects (platform/products/<product>/docker-compose.yml).
+#
+#   docker compose --env-file /etc/collective/platform.env --env-file /run/collective/platform.secrets.env up -d
+#
+# Memory limits are the contract that lets three products share 16 GB (PLAN.md). Keep them.
+name: platform
+
+networks:
+  collective:
+    name: collective
+    driver: bridge
+
+services:
+  # ------------------------------------------------------------------ ingress
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      COLLECTIVE_ENV: ${COLLECTIVE_ENV}
+      PLATFORM_HOSTNAME: ${PLATFORM_HOSTNAME}
+      ACME_EMAIL: ${CADDY_ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/sites:/etc/caddy/sites:ro
+      - /data/caddy:/data
+    networks: [collective]
+    deploy:
+      resources:
+        limits: { memory: 256M }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      options: { tag: "platform/caddy" }
+
+  # ------------------------------------------------------------------ database
+  # timescaledb-ha ships PostgreSQL 18 + TimescaleDB + pgvector + pgBackRest in one image.
+  postgres:
+    image: timescale/timescaledb-ha:pg18
+    restart: unless-stopped
+    user: "1000:1000"
+    stop_grace_period: 60s
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD}
+      PGDATA: /home/postgres/pgdata/data
+      # product role passwords consumed by postgres/init/10-products.sh on first start
+      GETPACK_DB_PASSWORD: ${GETPACK_DB_PASSWORD}
+      GETPROPERTY_DB_PASSWORD: ${GETPROPERTY_DB_PASSWORD}
+      GETPOP_DB_PASSWORD: ${GETPOP_DB_PASSWORD}
+      # pgBackRest → S3 via instance role (no keys). IMDSv2 hop limit is 2 so containers can reach it.
+      PGBACKREST_STANZA: collective
+      PGBACKREST_REPO1_S3_BUCKET: ${BACKUP_BUCKET}
+      PGBACKREST_REPO1_S3_REGION: ${AWS_REGION}
+      PGBACKREST_REPO1_S3_ENDPOINT: s3.${AWS_REGION}.amazonaws.com
+      PGBACKREST_REPO1_PATH: /pgbackrest/${COLLECTIVE_ENV}
+      COLLECTIVE_ENV: ${COLLECTIVE_ENV}
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+    volumes:
+      - /data/postgres:/home/postgres/pgdata
+      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./postgres/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      - /data/pgbackrest-spool:/var/spool/pgbackrest
+    networks: [collective]
+    expose: ["5432"]
+    deploy:
+      resources:
+        limits: { memory: "${POSTGRES_MEMORY_LIMIT:-4g}" }
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -h 127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    logging:
+      options: { tag: "platform/postgres" }
+
+  # ------------------------------------------------------------------ queue / cache
+  valkey:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    command:
+      - valkey-server
+      - --requirepass
+      - ${VALKEY_PASSWORD}
+      - --maxmemory
+      - ${VALKEY_MAXMEMORY:-384mb}
+      - --maxmemory-policy
+      - noeviction # BullMQ must never lose jobs; apps cache with TTLs instead
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --save
+      - ""
+    volumes:
+      - /data/valkey:/data
+    networks: [collective]
+    expose: ["6379"]
+    deploy:
+      resources:
+        limits: { memory: 512M }
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a $$VALKEY_PASSWORD ping | grep -q PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD}
+    logging:
+      options: { tag: "platform/valkey" }
+
+  # ------------------------------------------------------------------ MQTT (getproperty IoT)
+  emqx:
+    image: emqx/emqx:5.8
+    restart: unless-stopped
+    # TLS on 8883 uses the Let's Encrypt cert Caddy obtains for ${MQTT_HOSTNAME};
+    # bin/sync-mqtt-cert.sh (systemd timer) copies it into /data/emqx/certs and reloads the listener.
+    ports:
+      - "8883:8883"
+    environment:
+      EMQX_NODE__NAME: emqx@emqx.collective
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD}
+      EMQX_LISTENERS__TCP__DEFAULT__BIND: "0.0.0.0:1883" # containers only (not published)
+      EMQX_LISTENERS__SSL__DEFAULT__BIND: "0.0.0.0:8883"
+      EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CERTFILE: /opt/emqx/data/certs/fullchain.pem
+      EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__KEYFILE: /opt/emqx/data/certs/privkey.pem
+      EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__VERIFY: verify_none # devices authenticate with username/password
+      EMQX_LISTENERS__WS__DEFAULT__BIND: "0.0.0.0:8083"              # Caddy → wss for browsers
+      EMQX_LISTENERS__WSS__DEFAULT__ENABLE: "false"
+      EMQX_ALLOW_ANONYMOUS: "false"
+      EMQX_PROMETHEUS__ENABLE: "true"
+    volumes:
+      - /data/emqx:/opt/emqx/data
+    networks: [collective]
+    expose: ["1883", "8083", "18083"]
+    deploy:
+      resources:
+        limits: { memory: 512M }
+    healthcheck:
+      test: ["CMD", "emqx", "ctl", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    logging:
+      options: { tag: "platform/emqx" }
+
+  # ------------------------------------------------------------------ observability agent
+  alloy:
+    image: grafana/alloy:v1.11.0
+    restart: unless-stopped
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    environment:
+      COLLECTIVE_ENV: ${COLLECTIVE_ENV}
+      HOSTNAME_OVERRIDE: ${PLATFORM_HOSTNAME}
+      GRAFANA_PROMETHEUS_URL: ${GRAFANA_PROMETHEUS_URL}
+      GRAFANA_PROMETHEUS_USER: ${GRAFANA_PROMETHEUS_USER}
+      GRAFANA_LOKI_URL: ${GRAFANA_LOKI_URL}
+      GRAFANA_LOKI_USER: ${GRAFANA_LOKI_USER}
+      GRAFANA_TEMPO_URL: ${GRAFANA_TEMPO_URL}
+      GRAFANA_TEMPO_USER: ${GRAFANA_TEMPO_USER}
+      GRAFANA_API_KEY: ${GRAFANA_API_KEY}
+      POSTGRES_EXPORTER_DSN: postgresql://postgres:${POSTGRES_SUPERUSER_PASSWORD}@postgres:5432/postgres?sslmode=disable
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD}
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /data/alloy:/var/lib/alloy/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /:/rootfs:ro
+      - /sys:/sys:ro
+      - /proc:/host/proc:ro
+    networks: [collective]
+    expose: ["4317", "4318", "12345"] # OTLP gRPC/HTTP for app traces
+    deploy:
+      resources:
+        limits: { memory: 384M }
+    logging:
+      options: { tag: "platform/alloy" }

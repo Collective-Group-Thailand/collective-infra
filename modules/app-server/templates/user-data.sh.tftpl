@@ -1,0 +1,98 @@
+#!/bin/bash
+# Collective app server bootstrap — Amazon Linux 2023 arm64.
+# Idempotent: safe to re-run via SSM (`bash /var/lib/cloud/instance/scripts/part-001`).
+set -euo pipefail
+exec > >(tee -a /var/log/collective-bootstrap.log) 2>&1
+echo "== bootstrap start $(date -Is) env=${environment}"
+
+# ---------------------------------------------------------------- packages
+dnf install -y -q docker git jq amazon-cloudwatch-agent xfsprogs cronie
+systemctl enable --now docker crond
+
+COMPOSE_BIN=/usr/local/lib/docker/cli-plugins/docker-compose
+if [ ! -x "$COMPOSE_BIN" ] || ! "$COMPOSE_BIN" version | grep -q "${compose_version}"; then
+  mkdir -p "$(dirname "$COMPOSE_BIN")"
+  curl -fsSL "https://github.com/docker/compose/releases/download/${compose_version}/docker-compose-linux-aarch64" -o "$COMPOSE_BIN"
+  chmod +x "$COMPOSE_BIN"
+fi
+docker compose version
+
+# Docker daemon: json-file logs with rotation (Alloy tails these), live-restore so daemon restarts don't kill containers
+cat > /etc/docker/daemon.json <<'EOF'
+{
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "50m", "max-file": "3" },
+  "live-restore": true,
+  "default-address-pools": [{ "base": "172.30.0.0/16", "size": 24 }]
+}
+EOF
+systemctl restart docker
+
+# ---------------------------------------------------------------- data volume (/data)
+# Nitro exposes the EBS volume id (without dash) as the NVMe serial.
+DEV=""
+for i in $(seq 1 30); do
+  DEV=$(lsblk -dno NAME,SERIAL | awk '$2 == "${data_volume_id}" {print "/dev/"$1}')
+  [ -n "$DEV" ] && break
+  sleep 2
+done
+if [ -z "$DEV" ]; then echo "data volume ${data_volume_id} not attached yet — skipping mount"; else
+  if ! blkid "$DEV" >/dev/null 2>&1; then
+    echo "formatting $DEV as xfs"
+    mkfs.xfs -L collective-data "$DEV"
+  fi
+  UUID=$(blkid -s UUID -o value "$DEV")
+  mkdir -p /data
+  grep -q "UUID=$UUID" /etc/fstab || echo "UUID=$UUID /data xfs defaults,nofail,noatime 0 2" >> /etc/fstab
+  mountpoint -q /data || mount /data
+  mkdir -p /data/postgres /data/valkey /data/emqx /data/caddy /data/alloy /data/pgbackrest-spool
+  chown 1000:1000 /data/postgres          # timescaledb-ha runs as uid 1000 (postgres)
+  chown 999:999 /data/valkey              # valkey image uid
+  chown 1000:1000 /data/emqx              # emqx uid
+fi
+
+# ---------------------------------------------------------------- environment file
+mkdir -p /etc/collective /var/log/collective /opt/collective
+cat > /etc/collective/platform.env <<EOF
+COLLECTIVE_ENV=${environment}
+AWS_REGION=${region}
+AWS_DEFAULT_REGION=${region}
+AWS_ACCOUNT_ID=${account_id}
+ECR_REGISTRY=${account_id}.dkr.ecr.${region}.amazonaws.com
+SECRETS_PREFIX=${secrets_prefix}
+BACKUP_BUCKET=${backup_bucket}
+PLATFORM_HOSTNAME=${platform_hostname}
+INFRA_DIR=/opt/collective/infra
+PLATFORM_DIR=/opt/collective/platform
+EOF
+chmod 0644 /etc/collective/platform.env
+
+# ---------------------------------------------------------------- CloudWatch agent
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c "ssm:${cw_config_param}" -s
+
+# ---------------------------------------------------------------- clone platform repo
+# Deploy key (read-only) for ${github_org}/${infra_repo} lives in Secrets Manager ${secrets_prefix}/platform/deploy-key
+if aws secretsmanager get-secret-value --region "${region}" --secret-id "${secrets_prefix}/platform/deploy-key" \
+     --query SecretString --output text > /root/.ssh/collective_deploy_key.tmp 2>/dev/null; then
+  mkdir -p /root/.ssh && chmod 700 /root/.ssh
+  mv /root/.ssh/collective_deploy_key.tmp /root/.ssh/collective_deploy_key
+  chmod 600 /root/.ssh/collective_deploy_key
+  cat > /root/.ssh/config <<'EOF'
+Host github.com
+  IdentityFile /root/.ssh/collective_deploy_key
+  IdentitiesOnly yes
+  StrictHostKeyChecking accept-new
+EOF
+  if [ -d /opt/collective/infra/.git ]; then
+    git -C /opt/collective/infra fetch --quiet origin && git -C /opt/collective/infra reset --quiet --hard "origin/${infra_branch}"
+  else
+    git clone --quiet --branch "${infra_branch}" "git@github.com:${github_org}/${infra_repo}.git" /opt/collective/infra
+  fi
+  ln -sfn /opt/collective/infra/platform /opt/collective/platform
+  bash /opt/collective/platform/bin/bootstrap.sh
+else
+  rm -f /root/.ssh/collective_deploy_key.tmp
+  echo "!! secret ${secrets_prefix}/platform/deploy-key not found — create it, then re-run this script via SSM"
+fi
+
+echo "== bootstrap done $(date -Is)"

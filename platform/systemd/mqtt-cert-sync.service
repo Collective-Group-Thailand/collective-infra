@@ -1,0 +1,7 @@
+[Unit]
+Description=Copy Caddy-issued certificate into EMQX
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/collective/platform/bin/sync-mqtt-cert.sh

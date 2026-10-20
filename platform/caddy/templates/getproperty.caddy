@@ -1,0 +1,24 @@
+# Template → caddy/sites/getproperty.caddy. Hosts from caddy/sites.<env>.yml.
+
+{{WEB_HOST}} {
+	import security
+	import compress
+	reverse_proxy getproperty-web:3000 {
+		header_up X-Forwarded-Proto {scheme}
+	}
+}
+
+{{API_HOST}} {
+	import security
+	import compress
+	request_body {
+		max_size 32MB
+	}
+	# Edge devices (getproperty-edge) post telemetry here; keep timeouts short
+	reverse_proxy getproperty-api:3000 {
+		header_up X-Forwarded-Proto {scheme}
+		transport http {
+			read_timeout 60s
+		}
+	}
+}

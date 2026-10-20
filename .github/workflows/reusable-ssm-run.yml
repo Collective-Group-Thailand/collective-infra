@@ -1,0 +1,91 @@
+name: Reusable · run a command on the env box via SSM
+
+# Shared plumbing: assume the env's deploy role (OIDC), start the box if it is stopped (UAT),
+# send one shell command through SSM Run Command, wait, print output, fail on non-zero.
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "GitHub Environment: uat | production (holds AWS_DEPLOY_ROLE_ARN, INSTANCE_ID)"
+        type: string
+        required: true
+      command:
+        type: string
+        required: true
+      comment:
+        type: string
+        default: "gha"
+      timeout_seconds:
+        type: number
+        default: 1200
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: ssm-${{ inputs.environment }}
+      cancel-in-progress: false
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-southeast-7' }}
+
+      - name: Ensure instance is running (UAT is stopped outside office hours)
+        run: |
+          state=$(aws ec2 describe-instances --instance-ids "${{ vars.INSTANCE_ID }}" \
+                  --query 'Reservations[0].Instances[0].State.Name' --output text)
+          echo "instance state: $state"
+          if [ "$state" = "stopped" ]; then
+            aws ec2 start-instances --instance-ids "${{ vars.INSTANCE_ID }}" >/dev/null
+          fi
+          if [ "$state" != "running" ]; then
+            aws ec2 wait instance-status-ok --instance-ids "${{ vars.INSTANCE_ID }}"
+          fi
+          # SSM agent registration can lag the OK status by a few seconds
+          for i in $(seq 1 30); do
+            ping=$(aws ssm describe-instance-information \
+                     --filters "Key=InstanceIds,Values=${{ vars.INSTANCE_ID }}" \
+                     --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null || echo None)
+            [ "$ping" = "Online" ] && break
+            sleep 5
+          done
+          [ "$ping" = "Online" ] || { echo "SSM agent not online"; exit 1; }
+
+      - name: Send command
+        id: send
+        env:
+          CMD: ${{ inputs.command }}
+        run: |
+          # Base64 so quoting/newlines survive the JSON parameter boundary
+          b64=$(printf '%s' "$CMD" | base64 -w0)
+          id=$(aws ssm send-command \
+            --instance-ids "${{ vars.INSTANCE_ID }}" \
+            --document-name AWS-RunShellScript \
+            --comment "${{ inputs.comment }}" \
+            --timeout-seconds ${{ inputs.timeout_seconds }} \
+            --parameters "{\"commands\":[\"echo $b64 | base64 -d > /tmp/gha-cmd.sh\",\"bash /tmp/gha-cmd.sh\"],\"executionTimeout\":[\"${{ inputs.timeout_seconds }}\"]}" \
+            --query Command.CommandId --output text)
+          echo "command_id=$id" >> "$GITHUB_OUTPUT"
+
+      - name: Wait + show output
+        run: |
+          id="${{ steps.send.outputs.command_id }}"
+          for i in $(seq 1 $(( ${{ inputs.timeout_seconds }} / 10 + 6 ))); do
+            status=$(aws ssm get-command-invocation --command-id "$id" --instance-id "${{ vars.INSTANCE_ID }}" \
+                       --query Status --output text 2>/dev/null || echo Pending)
+            case "$status" in
+              Success|Failed|Cancelled|TimedOut|Undeliverable|Terminated) break ;;
+            esac
+            sleep 10
+          done
+          aws ssm get-command-invocation --command-id "$id" --instance-id "${{ vars.INSTANCE_ID }}" \
+            --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' --output json \
+            | jq -r '"== status: \(.Status)\n== stdout\n\(.Stdout)\n== stderr\n\(.Stderr)"'
+          [ "$status" = "Success" ]

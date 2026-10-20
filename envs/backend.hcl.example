@@ -1,0 +1,5 @@
+# Copy to envs/backend.hcl (gitignored) with values from `terraform output -raw backend_hcl` in bootstrap/
+bucket       = "collective-tfstate-123456789012"
+region       = "ap-southeast-7"
+encrypt      = true
+use_lockfile = true

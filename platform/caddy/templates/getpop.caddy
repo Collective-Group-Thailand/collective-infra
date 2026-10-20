@@ -1,0 +1,15 @@
+# Template → caddy/sites/getpop.caddy. getpop web is Flutter (static, S3/CloudFront) → API only here.
+
+{{API_HOST}} {
+	import security
+	import compress
+	request_body {
+		max_size 32MB
+	}
+	reverse_proxy getpop-api:3000 {
+		header_up X-Forwarded-Proto {scheme}
+		transport http {
+			read_timeout 120s # BOQ/PDF exports
+		}
+	}
+}

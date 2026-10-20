@@ -1,0 +1,117 @@
+# getpack on the shared box. Deployed with: bin/deploy-product.sh getpack <tag>
+# Env files (merged by compose_product in bin/lib.sh): /etc/collective/platform.env + /var/lib/collective/getpack.env (IMAGE_TAG)
+# App secrets: /run/collective/getpack.env (rendered from Secrets Manager collective/<env>/getpack/app)
+#
+# Memory budget (16 GB box): web 512M · api 640M · worker 2G (Chromium) · migrate transient
+name: getpack
+
+networks:
+  collective:
+    external: true
+
+x-api-base: &api-base
+  image: ${ECR_REGISTRY}/getpack/api:${IMAGE_TAG}
+  env_file: /run/collective/getpack.env
+  environment:
+    NODE_ENV: production
+    PORT: "3000"
+    TZ: Asia/Bangkok
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
+    OTEL_SERVICE_NAMESPACE: getpack
+    AWS_REGION: ${AWS_REGION}
+    S3_BUCKET: collective-${COLLECTIVE_ENV}-getpack-assets
+  networks: [collective]
+  restart: unless-stopped
+  init: false # image already uses tini
+
+services:
+  web:
+    image: ${ECR_REGISTRY}/getpack/web:${IMAGE_TAG}
+    container_name: getpack-web
+    env_file: /run/collective/getpack.env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      API_INTERNAL_URL: http://getpack-api:3000 # server-side BFF → API over the docker network
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
+      OTEL_SERVICE_NAME: getpack-web
+    networks: [collective]
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: { memory: 512M }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    labels:
+      collective.metrics: "true"
+      collective.metrics.port: "3000"
+      collective.metrics.path: "/api/metrics"
+
+  api:
+    <<: *api-base
+    container_name: getpack-api
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      TZ: Asia/Bangkok
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
+      OTEL_SERVICE_NAME: getpack-api
+      AWS_REGION: ${AWS_REGION}
+      S3_BUCKET: collective-${COLLECTIVE_ENV}-getpack-assets
+    deploy:
+      resources:
+        limits: { memory: 640M }
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    labels:
+      collective.metrics: "true"
+      collective.metrics.port: "3000"
+      collective.metrics.path: "/metrics"
+
+  # BullMQ consumers, outbox relay, PDFs (Chromium) — the only Chromium on the box by design
+  worker:
+    <<: *api-base
+    container_name: getpack-worker
+    command: ["node", "dist/src/worker.js"]
+    environment:
+      NODE_ENV: production
+      TZ: Asia/Bangkok
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
+      OTEL_SERVICE_NAME: getpack-worker
+      AWS_REGION: ${AWS_REGION}
+      S3_BUCKET: collective-${COLLECTIVE_ENV}-getpack-assets
+      WORKER_CONCURRENCY: "4"
+      PDF_CONCURRENCY: "2"
+    shm_size: 256m # Chromium
+    deploy:
+      resources:
+        limits: { memory: 2G }
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    labels:
+      collective.metrics: "true"
+      collective.metrics.port: "3001"
+      collective.metrics.path: "/metrics"
+
+  # One-shot: `prisma migrate deploy`. Not started by `up` (profile), only by deploy-product.sh.
+  migrate:
+    <<: *api-base
+    command: ["sh", "-c", "corepack enable >/dev/null 2>&1 || true; npx prisma migrate deploy"]
+    restart: "no"
+    profiles: ["tools"]
+    deploy:
+      resources:
+        limits: { memory: 768M }

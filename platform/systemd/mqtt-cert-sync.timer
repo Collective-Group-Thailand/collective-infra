@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily MQTT certificate sync
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 Asia/Bangkok
+OnBootSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

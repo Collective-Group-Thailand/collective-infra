@@ -1,0 +1,19 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+envs/backend.hcl
+bootstrap/terraform.tfvars
+*.auto.tfvars
+plan.txt
+plan.tail
+
+# Platform (rendered on the box, never committed)
+platform/caddy/sites/*.caddy
+platform/caddy/sites/_platform_users
+
+# OS
+.DS_Store

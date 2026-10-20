@@ -1,0 +1,35 @@
+# Template → rendered by bin/render-sites.sh into caddy/sites/getpack.caddy (gitignored).
+# {{WEB_HOST}} / {{API_HOST}} come from caddy/sites.<env>.yml.
+
+{{WEB_HOST}} {
+	import security
+	import compress
+
+	# Next.js BFF handles /api/* itself; everything goes to the web container
+	reverse_proxy getpack-web:3000 {
+		header_up X-Forwarded-Proto {scheme}
+		transport http {
+			read_timeout 60s
+		}
+	}
+}
+
+www.{{WEB_HOST}} {
+	redir https://{{WEB_HOST}}{uri} permanent
+}
+
+{{API_HOST}} {
+	import security
+	import compress
+
+	request_body {
+		max_size 64MB # artwork uploads go to S3 via presigned URL; this is the ceiling for everything else
+	}
+
+	reverse_proxy getpack-api:3000 {
+		header_up X-Forwarded-Proto {scheme}
+		transport http {
+			read_timeout 120s # PDF/preflight endpoints
+		}
+	}
+}

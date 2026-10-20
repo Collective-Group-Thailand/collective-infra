@@ -1,0 +1,84 @@
+name: Reusable · deploy product to env
+
+# Called by product repos after build:
+#   uses: <org>/collective-infra/.github/workflows/reusable-deploy.yml@v1
+# Assumes the env's deploy role (OIDC), starts the box if stopped (UAT), then runs
+# platform/bin/deploy-product.sh via SSM Run Command — pull, migrate, restart, health-check,
+# roll back on failure. Self-contained on purpose: a reusable workflow called cross-repo cannot
+# nest another one by relative path.
+
+on:
+  workflow_call:
+    inputs:
+      product:
+        description: "getpack | getproperty | getpop"
+        type: string
+        required: true
+      environment:
+        description: "uat | production (GitHub Environment holding AWS_DEPLOY_ROLE_ARN, INSTANCE_ID)"
+        type: string
+        required: true
+      image_tag:
+        description: "Tag already pushed to ECR for every image of this product (e.g. sha-abc1234)"
+        type: string
+        required: true
+      migrate:
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: ssm-${{ inputs.environment }}
+      cancel-in-progress: false
+    env:
+      INSTANCE_ID: ${{ vars.INSTANCE_ID }}
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-southeast-7' }}
+
+      - name: Ensure instance is running
+        run: |
+          state=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0].State.Name' --output text)
+          echo "instance state: $state"
+          [ "$state" = "stopped" ] && aws ec2 start-instances --instance-ids "$INSTANCE_ID" >/dev/null
+          [ "$state" = "running" ] || aws ec2 wait instance-status-ok --instance-ids "$INSTANCE_ID"
+          for i in $(seq 1 30); do
+            ping=$(aws ssm describe-instance-information --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+                     --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null || echo None)
+            [ "$ping" = "Online" ] && break; sleep 5
+          done
+          [ "$ping" = "Online" ] || { echo "SSM agent not online"; exit 1; }
+
+      - name: Deploy via SSM
+        id: send
+        run: |
+          id=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --comment "deploy ${{ inputs.product }} ${{ inputs.image_tag }} (${{ github.repository }}@${GITHUB_SHA::7})" \
+            --timeout-seconds 900 \
+            --parameters '{"commands":["/opt/collective/platform/bin/deploy-product.sh ${{ inputs.product }} ${{ inputs.image_tag }} ${{ inputs.migrate && '' || '--no-migrate' }}"],"executionTimeout":["900"]}' \
+            --query Command.CommandId --output text)
+          echo "command_id=$id" >> "$GITHUB_OUTPUT"
+
+      - name: Wait + show output
+        run: |
+          id="${{ steps.send.outputs.command_id }}"
+          for i in $(seq 1 100); do
+            status=$(aws ssm get-command-invocation --command-id "$id" --instance-id "$INSTANCE_ID" --query Status --output text 2>/dev/null || echo Pending)
+            case "$status" in Success|Failed|Cancelled|TimedOut|Undeliverable|Terminated) break ;; esac
+            sleep 10
+          done
+          aws ssm get-command-invocation --command-id "$id" --instance-id "$INSTANCE_ID" \
+            --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' --output json \
+            | jq -r '"== status: \(.Status)\n== stdout\n\(.Stdout)\n== stderr\n\(.Stderr)"'
+          [ "$status" = "Success" ]

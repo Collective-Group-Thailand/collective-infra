@@ -1,0 +1,273 @@
+// Grafana Alloy — single agent on the box. Ships host/container/Postgres/Valkey/Caddy/EMQX/app metrics,
+// docker logs and OTLP traces to Grafana Cloud (Free tier). Secrets arrive as env vars from the
+// `platform/grafana` secret. Label discipline matters: 10k active series is the free ceiling.
+
+logging {
+  level  = "warn"
+  format = "logfmt"
+}
+
+// ------------------------------------------------------------------ remote endpoints
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_PROMETHEUS_URL")
+    basic_auth {
+      username = sys.env("GRAFANA_PROMETHEUS_USER")
+      password = sys.env("GRAFANA_API_KEY")
+    }
+    // Drop high-cardinality series we never alert on before they leave the box.
+    write_relabel_config {
+      source_labels = ["__name__"]
+      regex         = "go_(gc|memstats)_.*|process_.*|promhttp_.*|container_(tasks_state|spec_.*|fs_(reads|writes)_.*|network_tcp.*|blkio.*)"
+      action        = "drop"
+    }
+  }
+  external_labels = {
+    env  = sys.env("COLLECTIVE_ENV"),
+    host = sys.env("HOSTNAME_OVERRIDE"),
+  }
+}
+
+loki.write "grafana_cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_LOKI_URL")
+    basic_auth {
+      username = sys.env("GRAFANA_LOKI_USER")
+      password = sys.env("GRAFANA_API_KEY")
+    }
+  }
+  external_labels = {
+    env  = sys.env("COLLECTIVE_ENV"),
+    host = sys.env("HOSTNAME_OVERRIDE"),
+  }
+}
+
+otelcol.exporter.otlphttp "grafana_cloud" {
+  client {
+    endpoint = sys.env("GRAFANA_TEMPO_URL")
+    auth     = otelcol.auth.basic.grafana_cloud.handler
+  }
+}
+
+otelcol.auth.basic "grafana_cloud" {
+  username = sys.env("GRAFANA_TEMPO_USER")
+  password = sys.env("GRAFANA_API_KEY")
+}
+
+// ------------------------------------------------------------------ host metrics
+prometheus.exporter.unix "host" {
+  procfs_path    = "/host/proc"
+  sysfs_path     = "/sys"
+  rootfs_path    = "/rootfs"
+  set_collectors = ["cpu", "meminfo", "filesystem", "diskstats", "netdev", "loadavg", "pressure"]
+  filesystem {
+    mount_points_exclude = "^/(dev|proc|sys|run|var/lib/docker/.+|rootfs/var/lib/docker/.+)($|/)"
+    fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|tmpfs)$"
+  }
+}
+
+prometheus.scrape "host" {
+  targets         = prometheus.exporter.unix.host.targets
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+  scrape_interval = "60s"
+  job_name        = "node"
+}
+
+// ------------------------------------------------------------------ container metrics (cAdvisor-equivalent)
+prometheus.exporter.cadvisor "containers" {
+  docker_host        = "unix:///var/run/docker.sock"
+  storage_duration   = "2m"
+  docker_only        = true
+  enabled_metrics    = ["cpu", "memory", "network", "oom_event"]
+}
+
+discovery.relabel "containers" {
+  targets = prometheus.exporter.cadvisor.containers.targets
+}
+
+prometheus.scrape "containers" {
+  targets         = discovery.relabel.containers.output
+  forward_to      = [prometheus.relabel.containers.receiver]
+  scrape_interval = "60s"
+  job_name        = "cadvisor"
+}
+
+prometheus.relabel "containers" {
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+  // Keep only named containers; compose project + service become labels.
+  rule {
+    source_labels = ["container_label_com_docker_compose_project"]
+    target_label  = "compose_project"
+  }
+  rule {
+    source_labels = ["container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["name"]
+    regex         = "^$"
+    action        = "drop"
+  }
+  rule {
+    regex  = "container_label_.*|id|image"
+    action = "labeldrop"
+  }
+}
+
+// ------------------------------------------------------------------ Postgres / Valkey exporters (built in)
+prometheus.exporter.postgres "shared" {
+  data_source_names = [sys.env("POSTGRES_EXPORTER_DSN")]
+  autodiscovery {
+    enabled = true
+  }
+}
+
+prometheus.scrape "postgres" {
+  targets         = prometheus.exporter.postgres.shared.targets
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+  scrape_interval = "60s"
+  job_name        = "postgres"
+}
+
+prometheus.exporter.redis "valkey" {
+  redis_addr     = "valkey:6379"
+  redis_password = sys.env("VALKEY_PASSWORD")
+}
+
+prometheus.scrape "valkey" {
+  targets         = prometheus.exporter.redis.valkey.targets
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+  scrape_interval = "60s"
+  job_name        = "valkey"
+}
+
+// ------------------------------------------------------------------ Caddy, EMQX, Alloy self
+prometheus.scrape "platform" {
+  targets = [
+    {"__address__" = "caddy:2019", "job" = "caddy"},
+    {"__address__" = "emqx:18083", "job" = "emqx", "__metrics_path__" = "/api/v5/prometheus/stats"},
+    {"__address__" = "127.0.0.1:12345", "job" = "alloy"},
+  ]
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+  scrape_interval = "60s"
+}
+
+// ------------------------------------------------------------------ app metrics: any container labelled
+//   labels: { "collective.metrics": "true", "collective.metrics.port": "3000", "collective.metrics.path": "/metrics" }
+discovery.docker "apps" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "30s"
+  filter {
+    name   = "label"
+    values = ["collective.metrics=true"]
+  }
+}
+
+discovery.relabel "apps" {
+  targets = discovery.docker.apps.targets
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "product"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_collective_metrics_path"]
+    target_label  = "__metrics_path__"
+    regex         = "(.+)"
+  }
+  rule {
+    source_labels = ["__meta_docker_network_ip", "__meta_docker_container_label_collective_metrics_port"]
+    separator     = ":"
+    target_label  = "__address__"
+    regex         = "(.+):(.+)"
+    replacement   = "$1:$2"
+  }
+  rule {
+    source_labels = ["__meta_docker_network_name"]
+    regex         = "collective"
+    action        = "keep"
+  }
+}
+
+prometheus.scrape "apps" {
+  targets         = discovery.relabel.apps.output
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+  scrape_interval = "30s"
+  job_name        = "apps"
+}
+
+// ------------------------------------------------------------------ logs: every container (json-file driver)
+discovery.docker "all" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "30s"
+}
+
+discovery.relabel "logs" {
+  targets = discovery.docker.all.targets
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "product"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+}
+
+loki.source.docker "all" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.relabel.logs.output
+  forward_to    = [loki.process.pino.receiver]
+  relabel_rules = discovery.relabel.logs.rules
+}
+
+loki.process "pino" {
+  forward_to = [loki.write.grafana_cloud.receiver]
+  // pino JSON: promote level + requestId to labels/structured metadata, keep body as-is
+  stage.json {
+    expressions = { level = "level", req_id = "reqId", msg = "msg" }
+  }
+  stage.template {
+    source   = "level"
+    template = "{{ if eq .Value \"50\" }}error{{ else if eq .Value \"40\" }}warn{{ else if eq .Value \"30\" }}info{{ else if eq .Value \"20\" }}debug{{ else }}{{ .Value }}{{ end }}"
+  }
+  stage.labels {
+    values = { level = "" }
+  }
+  stage.structured_metadata {
+    values = { req_id = "" }
+  }
+  // Drop debug noise from UAT-only verbose logging before it eats the 50 GB allowance
+  stage.drop {
+    source = "level"
+    value  = "debug"
+  }
+}
+
+// ------------------------------------------------------------------ traces: apps send OTLP to alloy:4317 / :4318
+otelcol.receiver.otlp "apps" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+  output {
+    traces = [otelcol.processor.batch.traces.input]
+  }
+}
+
+otelcol.processor.batch "traces" {
+  timeout = "5s"
+  output {
+    traces = [otelcol.exporter.otlphttp.grafana_cloud.input]
+  }
+}

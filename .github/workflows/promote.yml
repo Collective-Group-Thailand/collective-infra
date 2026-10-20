@@ -1,0 +1,70 @@
+name: Promote image uat → prod
+
+# Re-tag the image(s) currently deployed to UAT (or an explicit sha tag) as :prod and deploy to
+# production. No rebuild: the bytes that passed UAT are the bytes that ship. Approval gate = the
+# `production` GitHub Environment.
+
+on:
+  workflow_dispatch:
+    inputs:
+      product:
+        type: choice
+        options: [getpack, getproperty, getpop]
+        required: true
+      image_tag:
+        description: "sha-xxxxxxx to promote (leave empty = whatever :uat points at)"
+        type: string
+        default: ""
+      migrate:
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  retag:
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-southeast-7' }}
+      - id: tag
+        env:
+          PRODUCT: ${{ inputs.product }}
+          WANT: ${{ inputs.image_tag }}
+        run: |
+          case "$PRODUCT" in
+            getpack)     images="getpack/api getpack/web" ;;
+            getproperty) images="getproperty/api getproperty/web" ;;
+            getpop)      images="getpop/api" ;;
+          esac
+          tag="$WANT"
+          for img in $images; do
+            if [ -z "$tag" ]; then
+              # resolve :uat → its sha-* sibling tag
+              tag=$(aws ecr describe-images --repository-name "$img" --image-ids imageTag=uat \
+                      --query 'imageDetails[0].imageTags[?starts_with(@, `sha-`)] | [0]' --output text)
+            fi
+            manifest=$(aws ecr batch-get-image --repository-name "$img" --image-ids imageTag="$tag" \
+                         --query 'images[0].imageManifest' --output text)
+            [ "$manifest" != "None" ] || { echo "$img:$tag not found"; exit 1; }
+            aws ecr put-image --repository-name "$img" --image-tag prod --image-manifest "$manifest" >/dev/null \
+              || echo "$img:prod already points at $tag"
+            echo "$img: $tag → prod"
+          done
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: retag
+    uses: ./.github/workflows/reusable-deploy.yml # same repo → relative path is fine here
+    with:
+      product: ${{ inputs.product }}
+      environment: production
+      image_tag: ${{ needs.retag.outputs.tag }}
+      migrate: ${{ inputs.migrate }}

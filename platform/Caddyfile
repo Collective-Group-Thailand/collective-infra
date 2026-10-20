@@ -1,0 +1,65 @@
+# Collective ingress. Product hostnames live in caddy/sites/*.caddy (one file per product, rendered by
+# bin/render-sites.sh from caddy/sites.<env>.yml). Caddy reloads on `docker compose exec caddy caddy reload`.
+
+{
+	email {$ACME_EMAIL}
+	admin 0.0.0.0:2019
+	servers {
+		trusted_proxies static private_ranges
+		metrics
+	}
+	log {
+		output stdout
+		format json
+	}
+}
+
+(security) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		X-Frame-Options SAMEORIGIN
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}
+
+(compress) {
+	encode zstd gzip
+}
+
+# Platform host: health + EMQX dashboard + Alloy UI, basic-auth protected except /healthz
+{$PLATFORM_HOSTNAME} {
+	import security
+
+	handle /healthz {
+		respond "ok" 200
+	}
+
+	# Browser MQTT over WSS (getproperty web dashboards)
+	handle /mqtt* {
+		reverse_proxy emqx:8083
+	}
+
+	handle /emqx* {
+		basic_auth {
+			import /etc/caddy/sites/_platform_users
+		}
+		uri strip_prefix /emqx
+		reverse_proxy emqx:18083
+	}
+
+	handle /alloy* {
+		basic_auth {
+			import /etc/caddy/sites/_platform_users
+		}
+		uri strip_prefix /alloy
+		reverse_proxy alloy:12345
+	}
+
+	handle {
+		respond "collective platform ({$COLLECTIVE_ENV})" 200
+	}
+}
+
+import /etc/caddy/sites/*.caddy
