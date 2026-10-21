@@ -5,7 +5,15 @@ instance_type            = "t4g.xlarge"
 cpu_credits              = "standard" # switch to m7g.xlarge instead of "unlimited" if the credit alarm fires often
 data_volume_size_gb      = 120
 snapshot_retention_count = 7
-platform_hostname        = "platform.getpack.co" # TODO: or a collective-group domain
+
+# DLM cross-region copy of the daily /data snapshot (locked decision 6; getproperty O-016, 2026-10-21): Tokyo — outside
+# Singapore (locked decision 1), a destination with a comprehensive data-protection law (APPI) for the PDPA s.28
+# cross-border basis; copies encrypted, kept 7 days. PLAN.md §0 "Backup" holds the PDPA note; legal sign-off of the
+# processor (AWS) DPA wording is tracked in getproperty-api O-016.
+snapshot_copy_region         = "ap-northeast-1"
+snapshot_copy_retention_days = 7
+
+platform_hostname = "platform.getpack.co" # TODO: or a collective-group domain
 
 alert_emails = ["ops@collective.example"] # TODO
 github_org   = "collective-group-th"      # TODO: real org

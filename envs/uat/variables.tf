@@ -25,6 +25,17 @@ variable "snapshot_retention_count" {
   default = 7
 }
 
+variable "snapshot_copy_region" {
+  description = "DLM cross-region copy target of the daily data-volume snapshot (null = none)"
+  type        = string
+  default     = null
+}
+
+variable "snapshot_copy_retention_days" {
+  type    = number
+  default = 7
+}
+
 variable "platform_hostname" {
   type = string
 }

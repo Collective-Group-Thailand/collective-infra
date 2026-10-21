@@ -413,6 +413,23 @@ resource "aws_dlm_lifecycle_policy" "data_daily" {
       retain_rule {
         count = var.snapshot_retention_count
       }
+
+      # Off-region copy (locked decision 6; getproperty O-016 resolved 2026-10-21). Encrypted in the target region
+      # (its default EBS key unless snapshot_copy_kms_key_arn is set). PDPA s.28: personal data leaves Thailand here —
+      # see PLAN.md §0 "Backup" for the destination and the cross-border basis.
+      dynamic "cross_region_copy_rule" {
+        for_each = var.snapshot_copy_region == null ? [] : [var.snapshot_copy_region]
+        content {
+          target    = cross_region_copy_rule.value
+          encrypted = true
+          cmk_arn   = var.snapshot_copy_kms_key_arn
+          copy_tags = true
+          retain_rule {
+            interval      = var.snapshot_copy_retention_days
+            interval_unit = "DAYS"
+          }
+        }
+      }
     }
   }
   tags = local.common_tags

@@ -140,6 +140,8 @@ module "app_server" {
   alert_emails                 = var.alert_emails
   enable_instance_check_reboot = !var.schedule.enabled
   snapshot_retention_count     = var.snapshot_retention_count
+  snapshot_copy_region         = var.snapshot_copy_region
+  snapshot_copy_retention_days = var.snapshot_copy_retention_days
 }
 
 # --- Office-hours schedule (UAT) -------------------------------------------------------------------
