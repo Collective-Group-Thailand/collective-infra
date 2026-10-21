@@ -7,10 +7,13 @@
 # these NOLOGIN group roles; gp_platform needs BYPASSRLS, which only a superuser can grant. The app runs as
 # `getproperty` and switches per transaction (`SET LOCAL ROLE gp_app` / `gp_platform`: DATABASE_APP_ROLE /
 # DATABASE_PLATFORM_ROLE in the app secret), so row-level security applies to every tenant query.
-# EMQX no longer reads PostgreSQL (getproperty-api D-235, blueprint T-7: HTTP authn/authz on getproperty-api), so
-# there is no broker login. `gp_mqtt` survives only as a NOLOGIN role without members: getproperty-api's migration 0010
-# (immutable, applied by the NOCREATEROLE product login) still grants to it and creates a policy for it; drop it by
-# hand once getproperty-api ships the migration that removes that policy (docs/PROGRESS.md, needs from getproperty-api).
+# EMQX no longer reads PostgreSQL (getproperty-api D-235 / D-244: HTTP authn/authz on getproperty-api), so there is no
+# broker login. `gp_mqtt` is still created here as a NOLOGIN role without members, for fresh boxes only: getproperty-api's
+# migration 0010 (immutable) runs `CREATE ROLE gp_mqtt` when the role is missing, which the NOCREATEROLE product login
+# may not do — without it the first migrate on a fresh box would fail. Migration 0037 removes its policy and grants,
+# and products/getproperty/hooks/post-migrate.sh (run by deploy-product.sh after a successful migrate) drops the role
+# once 0037 is recorded — on fresh and existing boxes alike. On an already-migrated box this script recreates nothing
+# that matters: re-running it by hand would only bring back an empty role, which the next api deploy drops again.
 set -euo pipefail
 
 psql -v ON_ERROR_STOP=1 --username postgres --dbname postgres <<-'SQL'

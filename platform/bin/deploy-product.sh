@@ -1,7 +1,7 @@
 #!/bin/bash
 # Deploy one product at one image tag. Invoked by GitHub Actions through SSM Run Command:
 #   /opt/collective/platform/bin/deploy-product.sh <product> <image_tag> [--no-migrate] [--component <name>]
-# Steps: fetch secrets → pull → migrate → up → healthcheck → (rollback on failure).
+# Steps: fetch secrets → pull → migrate (+ the product's post-migrate hook) → up → healthcheck → (rollback on failure).
 # --component <name>: a product whose images come from several repos (getproperty: api, web, liff) deploys one
 # image at a time. The tag goes to <NAME>_IMAGE_TAG in the state file (the compose file reads it, e.g.
 # getproperty/web:${WEB_IMAGE_TAG}); IMAGE_TAG (the api image) and the other components keep theirs. Without it,
@@ -60,6 +60,10 @@ if [ "$MIGRATE" = 1 ] && grep -q '^  api:' "$PRODUCT_DIR/docker-compose.yml"; th
   log "running migrations"
   # `migrate` service = same api image, one-shot (defined in the product compose file)
   compose_product "$PRODUCT" run --rm --no-deps migrate
+  # Product hook (optional), only after a successful migration: products/<product>/hooks/post-migrate.sh — e.g.
+  # getproperty drops the gp_mqtt role once its migration 0037 is applied. Idempotent; a failure only warns.
+  hook="$PRODUCT_DIR/hooks/post-migrate.sh"
+  if [ -x "$hook" ]; then "$hook" || log "WARN: $PRODUCT post-migrate hook failed"; fi
 fi
 
 rollback_args=("$PRODUCT"); [ -z "$COMPONENT" ] || rollback_args+=(--component "$COMPONENT")
