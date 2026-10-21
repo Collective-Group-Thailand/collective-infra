@@ -5,9 +5,14 @@
 # X-Forwarded-For of untrusted (internet) clients and appends the peer, so every container sees exactly one
 # trusted hop (TRUST_PROXY=1 / TRUSTED_HOPS=1).
 
-# /internal/* (EMQX's HTTP authn/authz on getproperty-api, D-235) is docker-network only: never routed publicly.
+# Docker-network-only paths of getproperty-api, never routed publicly (404 on every getproperty host):
+#  - /internal/* — EMQX's HTTP authn/authz (D-235, D-244);
+#  - /webhooks/integration/* — signed events from the other Collective products on this box (D-238, D-247), which
+#    post to http://getproperty-api:3000/webhooks/integration/<getbuild|getpack> over the `collective` network. A
+#    partner on another box does not get this route opened: it uses the SNS/SQS transport (D-238,
+#    INTEGRATION_<P>_TRANSPORT=sns, Terraform products.<p>.enable_sqs).
 (getproperty_internal_404) {
-	@getproperty_internal path /internal /internal/*
+	@getproperty_internal path /internal /internal/* /webhooks/integration /webhooks/integration/*
 	respond @getproperty_internal 404
 }
 
@@ -42,7 +47,7 @@
 }
 
 # Public API: browsers' presigned-upload flows, LINE / payment webhooks, the BFFs' fallback. Never the device mTLS
-# header: only DEVICE_HOST may set it.
+# header: only DEVICE_HOST may set it. Not /internal/* or /webhooks/integration/* (getproperty_internal_404).
 {{API_HOST}} {
 	import getproperty_common
 	request_body {

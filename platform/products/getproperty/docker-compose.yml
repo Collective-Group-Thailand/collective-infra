@@ -4,6 +4,15 @@
 # deploy with --component — until their first deploy they run the env's moving tag :uat / :prod).
 # App secrets: /run/collective/getproperty.env (rendered from Secrets Manager collective/<env>/getproperty/app;
 # the keys are listed in getproperty-api docs/deployment.md §3 — the app does not call Secrets Manager itself).
+# Cross-product events (getproperty-api D-238, D-247), keys of that secret, per partner P = GETBUILD | GETPACK:
+#   INTEGRATION_<P>_TRANSPORT    none (default: events wait in bridge.integration_event) | webhook | sns
+#   INTEGRATION_<P>_WEBHOOK_URL  the partner's receiver on the docker network — getbuild (the Build modules of getpop):
+#                                http://getpop-api:3000/webhooks/integration/getproperty; getpack:
+#                                http://getpack-api:3000/webhooks/integration/getproperty
+#   INTEGRATION_<P>_SIGNING_KEYS getproperty's HMAC keys toward P (≥ 32 chars, comma-separated, first = current)
+#   INTEGRATION_<P>_VERIFY_KEYS  P's keys accepted on http://getproperty-api:3000/webhooks/integration/<getbuild|getpack>
+# Both directions stay on the `collective` network; Caddy answers 404 for /webhooks/integration/* on public hosts. A
+# partner on another box uses `sns` (INTEGRATION_<P>_SNS_TOPIC_ARN, SQS on the receiving side) — never a public route.
 #
 # Images (getproperty-api docs/deployment.md §2): one api image, four commands — main (:3000 /health /metrics),
 # worker (:3001), ingest (:3001 in its own container, INGEST_HEALTH_PORT — image contract, T-10), migrate (one-shot:
