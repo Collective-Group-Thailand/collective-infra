@@ -10,10 +10,11 @@
 # TimescaleDB step). The image's entrypoint runs the given command, so `command:` below is authoritative.
 #
 # Memory budget (limits): web 384M · liff 256M · api 640M · worker 1G (Chromium, invoices/contracts PDFs) ·
-# ingest 256M · migrate 512M transient = 2.5 GB. With getpack (3.2 GB) and the platform services without
-# PostgreSQL (1.7 GB) that leaves ~8.6 GB for PostgreSQL + page cache on prod (t4g.xlarge, 16 GB). On uat
-# (t4g.large, 8 GB) the limits over-commit: they are ceilings, not reservations — set POSTGRES_MEMORY_LIMIT=2g in
-# uat's platform.env and watch container_memory_working_set_bytes in Grafana (docs/deployment.md §6).
+# ingest 256M · clamav 1.25G (signature database) · migrate 512M transient = 3.75 GB. With getpack (3.2 GB) and the
+# platform services without PostgreSQL (1.7 GB) that leaves ~7.3 GB for PostgreSQL (4 GB) + page cache on prod
+# (t4g.xlarge, 16 GB). On uat (t4g.large, 8 GB) the limits over-commit: they are ceilings, not reservations — set
+# POSTGRES_MEMORY_LIMIT=2g in uat's platform.env and watch container_memory_working_set_bytes in Grafana; ClamAV is
+# the first candidate to move to a shared platform service (getproperty-api docs/deployment.md §6).
 name: getproperty
 
 networks:
@@ -49,6 +50,14 @@ x-api-env: &api-env
   DEVICE_MTLS_HEADER: x-client-cert-sha256
   PDF_RENDERER_MODE: real
   PDF_CHROMIUM_EXECUTABLE: /usr/bin/chromium
+  # Per-merchant / per-tenant provider credentials the app reads from Secrets Manager at run time — under the
+  # product's prefix, which is all the instance role may read (modules/product IAM).
+  PAYMENTS_SECRETS_PREFIX: collective/${COLLECTIVE_ENV}/getproperty/payments
+  LOCKS_SECRETS_PREFIX: collective/${COLLECTIVE_ENV}/getproperty/locks
+  ETAX_SECRETS_PREFIX: collective/${COLLECTIVE_ENV}/getproperty/etax
+  # Upload virus scan (required in production)
+  CLAMAV_HOST: getproperty-clamav
+  CLAMAV_PORT: "3310"
 
 x-api-base: &api-base
   image: ${ECR_REGISTRY}/getproperty/api:${IMAGE_TAG}
@@ -187,6 +196,25 @@ services:
       collective.metrics: "true"
       collective.metrics.port: "3002"
       collective.metrics.path: "/metrics"
+
+  # clamd for the upload scan (INSTREAM on 3310, docker network only); freshclam inside updates signatures
+  clamav:
+    image: clamav/clamav-debian:1.4
+    container_name: getproperty-clamav
+    networks: [collective]
+    restart: unless-stopped
+    volumes:
+      - /data/getproperty/clamav:/var/lib/clamav
+    expose: ["3310"]
+    deploy:
+      resources:
+        limits: { memory: 1280M }
+    healthcheck:
+      test: ["CMD-SHELL", "clamdcheck.sh || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 300s # first signature download
 
   # One-shot, run by deploy-product.sh before `up` (profile, never started by `up`). Not `npx prisma migrate deploy`:
   # getproperty's `core` schema comes from @collective/asset-core and must migrate first; the image's runner applies
