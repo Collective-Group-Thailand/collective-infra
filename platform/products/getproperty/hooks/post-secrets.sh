@@ -6,7 +6,9 @@
 #     any copy still in the product secret. Interim (box set up before T-6): when the platform secret is empty the
 #     product secret's own DEVICE_CA_* stay, and MQTT_TLS__SERVER_PEM / MQTT_TLS__SERVER_KEY / MQTT_TLS__CA_PEM of
 #     the product secret (the former getproperty/mqtt-tls secret, T-4) still feed EMQX's listener.
-#  2. The API's MQTT user on EMQX's internal listener (MQTT_USERNAME / MQTT_PASSWORD of the app secret):
+#  2. EMQX_AUTH_TOKEN for the API: the header token EMQX sends on its HTTP authn/authz calls to
+#     /internal/emqx/{authn,authz} (platform secret collective/<env>/platform/emqx, key getproperty_auth_token).
+#  3. The API's MQTT user on EMQX's internal listener (MQTT_USERNAME / MQTT_PASSWORD of the app secret):
 #     bootstrap file for a fresh EMQX + an upsert through EMQX's REST API for a running one.
 # UNVERIFIED on a live box (written against the EMQX 5.8 and Caddy 2.10 documentation).
 source "$(dirname "$0")/../../../bin/lib.sh"
@@ -30,6 +32,15 @@ else
     install_device_tls "$(jq -r .MQTT_TLS__SERVER_PEM <<<"$tls")" "$(jq -r .MQTT_TLS__SERVER_KEY <<<"$tls")" \
       "$(jq -r .MQTT_TLS__CA_PEM <<<"$tls")" "getproperty/app MQTT_TLS__* (interim)"
   fi
+fi
+
+# The token EMQX's HTTP hooks present (x-emqx-auth-token); the API refuses /internal/emqx/* without it
+token=$(grep -s '^GETPROPERTY_EMQX_AUTH_TOKEN=' "$RUN_DIR/platform.secrets.env" | cut -d= -f2- || true)
+if [ -n "$token" ]; then
+  { grep -v '^EMQX_AUTH_TOKEN=' "$ENV_FILE" || true; printf "EMQX_AUTH_TOKEN='%s'\n" "$token"; } > "$ENV_FILE.next"
+  chmod 0600 "$ENV_FILE.next"; mv "$ENV_FILE.next" "$ENV_FILE"
+else
+  log "WARN: ${SECRETS_PREFIX}/platform/emqx has no getproperty_auth_token — EMQX refuses every gateway"
 fi
 
 # The API's broker login (internal listener 1883; never published)

@@ -23,6 +23,11 @@ PY
 rc=0
 for h in $hosts; do
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 --resolve "$h:443:127.0.0.1" "https://$h/health" || echo 000)
+  # getproperty's MQTT_HOST serves the device-CA broker certificate (gateways' WSS fallback), not a public one
+  if [ "$code" = 000 ] && [ -s "$DEVICE_CA_SITE_FILE" ]; then
+    code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 --cacert "$DEVICE_CA_SITE_FILE" \
+             --resolve "$h:443:127.0.0.1" "https://$h/health" || echo 000)
+  fi
   case "$code" in
     2*|3*|404) log "edge $h → $code" ;;   # 404 on /health is fine for web hosts; TLS + routing proved
     *) log "edge $h → $code FAIL"; rc=1 ;;

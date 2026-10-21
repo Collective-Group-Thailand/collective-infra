@@ -18,11 +18,12 @@ fetch_platform() {
     echo "POSTGRES_SUPERUSER_PASSWORD=$(jq -r .superuser_password <<<"$pg")"
     echo "GETPACK_DB_PASSWORD=$(jq -r .getpack_password <<<"$pg")"
     echo "GETPROPERTY_DB_PASSWORD=$(jq -r .getproperty_password <<<"$pg")"
-    # getproperty's EMQX authorization login (role gp_mqtt; postgres/init/20-getproperty.sh). Optional key.
-    echo "GETPROPERTY_MQTT_DB_PASSWORD=$(jq -r '.getproperty_mqtt_password // ""' <<<"$pg")"
     echo "GETPOP_DB_PASSWORD=$(jq -r .getpop_password <<<"$pg")"
     echo "VALKEY_PASSWORD=$(jq -r .password <<<"$valkey")"
     echo "EMQX_DASHBOARD_PASSWORD=$(jq -r .dashboard_password <<<"$emqx")"
+    # Shared header token of EMQX's HTTP authn/authz calls to getproperty-api (/internal/emqx/*, D-235); the
+    # getproperty hook hands the same value to the API as EMQX_AUTH_TOKEN. Empty = every gateway is refused.
+    echo "GETPROPERTY_EMQX_AUTH_TOKEN=$(jq -r '.getproperty_auth_token // ""' <<<"$emqx")"
     echo "CADDY_ACME_EMAIL=$(jq -r '.acme_email // "ops@example.invalid"' <<<"${caddy:-{\}}")"
     if [ -n "$grafana" ]; then json_to_env "$grafana" GRAFANA_; else
       log "WARN: platform/grafana secret empty — Alloy will fail to ship; set it and re-run"

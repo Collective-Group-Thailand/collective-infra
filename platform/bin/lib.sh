@@ -63,7 +63,7 @@ DEVICE_CA_SITE_FILE="$PLATFORM_DIR/caddy/sites/device-ca.pem"
 # Writes the files EMQX reads, gives Caddy the trust pool (render-sites.sh un-skips the device host), and restarts
 # EMQX's ssl listener when anything changed.
 install_device_tls() {
-  local src="$4" changed=0 name
+  local src="$4" changed=0 name site mode
   local -A content=([server.pem]="$1" [server.key]="$2" [ca.pem]="$3")
   mkdir -p "$DEVICE_TLS_DIR"
   for name in server.pem server.key ca.pem; do
@@ -73,8 +73,16 @@ install_device_tls() {
     fi
     rm -f "$DEVICE_TLS_DIR/$name.next"
   done
-  if ! cmp -s "$DEVICE_TLS_DIR/ca.pem" "$DEVICE_CA_SITE_FILE"; then
-    install -m 0644 "$DEVICE_TLS_DIR/ca.pem" "$DEVICE_CA_SITE_FILE"
+  # Caddy: the CA chain (DEVICE_HOST client_auth trust pool) and the broker certificate (MQTT_HOST, the WSS fallback
+  # wss://<MQTT_HOST>/mqtt — same certificate as 8883, so gateways verify both against their caChainPem).
+  local sites_changed=0 pair
+  for pair in "ca.pem:device-ca.pem:0644" "server.pem:device-broker.pem:0600" "server.key:device-broker.key:0600"; do
+    IFS=: read -r name site mode <<<"$pair"
+    if ! cmp -s "$DEVICE_TLS_DIR/$name" "$PLATFORM_DIR/caddy/sites/$site"; then
+      install -m "$mode" "$DEVICE_TLS_DIR/$name" "$PLATFORM_DIR/caddy/sites/$site"; sites_changed=1
+    fi
+  done
+  if [ "$sites_changed" = 1 ]; then
     "$PLATFORM_DIR/bin/render-sites.sh" || log "WARN: render-sites failed after the device CA changed"
   fi
   if [ "$changed" = 1 ]; then

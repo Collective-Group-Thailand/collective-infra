@@ -1,12 +1,20 @@
 # Template → caddy/sites/getproperty.caddy (bin/render-sites.sh). Hosts from caddy/sites.<env>.yml.
 # requires-file: sites/device-ca.pem
+# requires-file: sites/device-broker.pem
 # getproperty-api docs/deployment.md §4 is the source of these routes. Client IP (D-229): Caddy replaces
 # X-Forwarded-For of untrusted (internet) clients and appends the peer, so every container sees exactly one
 # trusted hop (TRUST_PROXY=1 / TRUSTED_HOPS=1).
 
+# /internal/* (EMQX's HTTP authn/authz on getproperty-api, D-235) is docker-network only: never routed publicly.
+(getproperty_internal_404) {
+	@getproperty_internal path /internal /internal/*
+	respond @getproperty_internal 404
+}
+
 (getproperty_common) {
 	import security
 	import compress
+	import getproperty_internal_404
 	# metrics are scraped by Alloy on the docker network, never through the public hosts
 	respond /metrics 404
 	respond /api/metrics 404
@@ -61,6 +69,7 @@
 		}
 	}
 	import security
+	import getproperty_internal_404
 	respond /metrics 404
 	# OTA artefacts (getproperty-api D-231, deployment.md §5a): streamed by the API from the private bucket
 	# (releases/edge/…) to the authenticated gateway; GET/HEAD only and a long upstream read timeout because the
@@ -96,13 +105,24 @@
 	}
 }
 
-# MQTT itself is EMQX's mTLS listener on :8883 (server certificate from the getproperty device CA, not this
-# host's Let's Encrypt one — gateways trust only the CA they got at bootstrap). This site only answers the
-# platform health check and documents the host.
+# MQTT_HOST: DNS name of the broker. MQTT itself is EMQX's mTLS listener on :8883 (published by the platform compose
+# file). On 443 this site is the WSS fallback for buildings that block 8883 (getproperty O-012, resolved 2026-10-21 as
+# recommended): wss://{{MQTT_HOST}}/mqtt → EMQX ws listener, where the gateway authenticates with its device JWT alone
+# (no client certificate on this path; EMQX HTTP authn on getproperty-api). The site serves the device-CA broker
+# certificate (bin/render-device-ca.sh), not Let's Encrypt, so gateways verify 8883 and WSS against the same
+# caChainPem of their bootstrap. Set MQTT_PUBLIC_WS_URL=wss://{{MQTT_HOST}}/mqtt in getproperty/app to offer it.
 {{MQTT_HOST}} {
+	tls /etc/caddy/sites/device-broker.pem /etc/caddy/sites/device-broker.key
 	import security
+	import getproperty_internal_404
+	handle /mqtt {
+		reverse_proxy platform-emqx-1:8083 {
+			# a Caddy reload (render-sites.sh) keeps open WebSockets for 10 min instead of dropping every gateway at once
+			stream_close_delay 10m
+		}
+	}
 	handle /health {
-		respond "getproperty mqtt: mqtts://{{MQTT_HOST}}:8883 (mTLS)" 200
+		respond "getproperty mqtt: mqtts://{{MQTT_HOST}}:8883 (mTLS), wss://{{MQTT_HOST}}/mqtt (device JWT)" 200
 	}
 	handle {
 		respond 404

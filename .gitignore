@@ -15,6 +15,7 @@ plan.tail
 platform/caddy/sites/*.caddy
 platform/caddy/sites/_platform_users
 platform/caddy/sites/*.pem
+platform/caddy/sites/*.key
 
 # OS
 .DS_Store

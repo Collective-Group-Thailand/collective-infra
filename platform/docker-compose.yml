@@ -57,7 +57,6 @@ services:
       # product role passwords consumed by postgres/init/10-products.sh on first start
       GETPACK_DB_PASSWORD: ${GETPACK_DB_PASSWORD}
       GETPROPERTY_DB_PASSWORD: ${GETPROPERTY_DB_PASSWORD}
-      GETPROPERTY_MQTT_DB_PASSWORD: ${GETPROPERTY_MQTT_DB_PASSWORD:-} # EMQX authorization login (20-getproperty.sh)
       GETPOP_DB_PASSWORD: ${GETPOP_DB_PASSWORD}
       # pgBackRest → S3 via instance role (no keys). IMDSv2 hop limit is 2 so containers can reach it.
       PGBACKREST_STANZA: collective
@@ -125,21 +124,34 @@ services:
     logging:
       options: { tag: "platform/valkey" }
 
-  # ------------------------------------------------------------------ MQTT (getproperty IoT)
+  # ------------------------------------------------------------------ MQTT (shared broker)
+  # EMQX is the platform broker (getproperty-api D-235). Listeners:
+  #  - ssl:default 8883, PUBLIC — IoT gateways, mutual TLS against the platform device CA (bin/render-device-ca.sh,
+  #    collective/<env>/platform/device-ca); the server certificate comes from the same CA because gateways trust only
+  #    the caChainPem of their bootstrap (not Let's Encrypt). Zone `devices`: the certificate CN (gw-<gatewayId>)
+  #    becomes username and client id. Authentication: HTTP → getproperty-api, CN + device JWT as password.
+  #  - tcp:default 1883, INTERNAL (docker network only, never published) — product services; password users from the
+  #    built-in database (getproperty's MQTT_USERNAME via products/getproperty/hooks/post-secrets.sh).
+  #  - ws:default 8083, INTERNAL, public only through Caddy as wss://<MQTT_HOST>/mqtt (device-CA broker certificate)
+  #    — the WSS fallback for buildings that block 8883 (getproperty O-012, resolved 2026-10-21 as recommended): no
+  #    client certificate on this path, the gateway is authenticated by its device JWT alone (≤ 1 h, issued only over
+  #    mTLS to a non-retired gateway). The HTTP body says which path (`transport` "mtls" | "ws").
+  # Authorization: file (platform-wide denies, emqx/platform-acl.conf) → HTTP getproperty-api (`gp/v1/#` is
+  # getproperty's namespace; it answers "ignore" for anything else) → no_match = deny, deny_action = disconnect.
+  # The HTTP calls carry x-emqx-auth-token (GETPROPERTY_EMQX_AUTH_TOKEN ← platform/emqx `getproperty_auth_token`);
+  # /internal/* is docker-network only and Caddy answers 404 for it on every public host. With the API down the
+  # hooks fail closed (a failed call counts as "ignore", so no authenticator allows): gateways keep their readings
+  # (store-and-forward) and reconnect with back-off. Env values in HOCON (listener chains, sources) — UNVERIFIED
+  # against a running EMQX 5.8 (no Docker here).
   emqx:
     image: emqx/emqx:5.8
     restart: unless-stopped
-    # 8883 = getproperty's gateway listener (device protocol §1): mutual TLS. The server certificate and the CA that
-    # verifies client certificates are getproperty's device CA (gateways trust only the CA they received at
-    # bootstrap, so this is not Caddy's Let's Encrypt certificate) — rendered into /data/emqx/certs/getproperty by
-    # products/getproperty/hooks/post-secrets.sh. The certificate CN (gw-<gatewayId>) becomes the username; there is
-    # no password on this listener, and authorization comes from getproperty's smart.mqtt_acl (source #2 below).
-    # 1883 (containers only) requires a password (built-in database; the API's user from the same hook).
     ports:
       - "8883:8883"
     environment:
       EMQX_NODE__NAME: emqx@emqx.collective
       EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD}
+      EMQX_MQTT__MAX_PACKET_SIZE: 1MB # ≥ 256 KB for 200-reading telemetry batches
       EMQX_LISTENERS__TCP__DEFAULT__BIND: "0.0.0.0:1883" # containers only (not published)
       EMQX_LISTENERS__SSL__DEFAULT__BIND: "0.0.0.0:8883"
       EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CERTFILE: /opt/emqx/data/certs/device/server.pem
@@ -148,13 +160,28 @@ services:
       EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__VERIFY: verify_peer
       EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__FAIL_IF_NO_PEER_CERT: "true"
       EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__VERSIONS: '["tlsv1.3","tlsv1.2"]'
-      EMQX_LISTENERS__SSL__DEFAULT__ENABLE_AUTHN: "false" # the verified certificate is the authentication
       EMQX_LISTENERS__SSL__DEFAULT__ZONE: devices
       EMQX_ZONES__DEVICES__MQTT__PEER_CERT_AS_USERNAME: cn
       EMQX_ZONES__DEVICES__MQTT__PEER_CERT_AS_CLIENTID: cn
-      EMQX_LISTENERS__WS__DEFAULT__BIND: "0.0.0.0:8083"              # Caddy → wss for browsers (password)
+      EMQX_LISTENERS__SSL__DEFAULT__ENABLE_AUTHN: "true"
+      EMQX_LISTENERS__SSL__DEFAULT__AUTHENTICATION: >-
+        [{mechanism = password_based, backend = http, method = post,
+          url = "http://getproperty-api:3000/internal/emqx/authn",
+          headers {"content-type" = "application/json", "x-emqx-auth-token" = "${GETPROPERTY_EMQX_AUTH_TOKEN:-}"},
+          body {transport = "mtls", clientid = "$${clientid}", username = "$${username}", password = "$${password}",
+                cert_common_name = "$${cert_common_name}", cert_subject = "$${cert_subject}", peerhost = "$${peerhost}"},
+          request_timeout = "5s", pool_size = 8}]
+      EMQX_LISTENERS__WS__DEFAULT__BIND: "0.0.0.0:8083"
+      EMQX_LISTENERS__WS__DEFAULT__ENABLE_AUTHN: "true"
+      EMQX_LISTENERS__WS__DEFAULT__AUTHENTICATION: >-
+        [{mechanism = password_based, backend = http, method = post,
+          url = "http://getproperty-api:3000/internal/emqx/authn",
+          headers {"content-type" = "application/json", "x-emqx-auth-token" = "${GETPROPERTY_EMQX_AUTH_TOKEN:-}"},
+          body {transport = "ws", clientid = "$${clientid}", username = "$${username}", password = "$${password}",
+                cert_common_name = "", cert_subject = "", peerhost = "$${peerhost}"},
+          request_timeout = "5s", pool_size = 4}]
       EMQX_LISTENERS__WSS__DEFAULT__ENABLE: "false"
-      # password users (1883, ws): built-in database, seeded from the bootstrap file on a fresh data dir
+      # 1883 (global chain): password users in the built-in database, seeded from the bootstrap file on a fresh data dir
       EMQX_AUTHENTICATION__1__MECHANISM: password_based
       EMQX_AUTHENTICATION__1__BACKEND: built_in_database
       EMQX_AUTHENTICATION__1__USER_ID_TYPE: username
@@ -162,30 +189,24 @@ services:
       EMQX_AUTHENTICATION__1__PASSWORD_HASH_ALGORITHM__SALT_POSITION: suffix
       EMQX_AUTHENTICATION__1__BOOTSTRAP_FILE: /opt/emqx/data/getproperty/users.json
       EMQX_AUTHENTICATION__1__BOOTSTRAP_TYPE: plain
-      # authorization: file (the API's user) → getproperty's smart.mqtt_acl (gateways) → deny
       EMQX_AUTHORIZATION__NO_MATCH: deny
       EMQX_AUTHORIZATION__DENY_ACTION: disconnect
       EMQX_AUTHORIZATION__CACHE__ENABLE: "true"
-      EMQX_AUTHORIZATION__CACHE__TTL: 1m
-      EMQX_AUTHORIZATION__SOURCES__1__TYPE: file
-      EMQX_AUTHORIZATION__SOURCES__1__ENABLE: "true"
-      EMQX_AUTHORIZATION__SOURCES__1__PATH: /opt/emqx/etc/getproperty-acl.conf
-      EMQX_AUTHORIZATION__SOURCES__2__TYPE: postgresql
-      EMQX_AUTHORIZATION__SOURCES__2__ENABLE: "true"
-      EMQX_AUTHORIZATION__SOURCES__2__SERVER: postgres:5432
-      EMQX_AUTHORIZATION__SOURCES__2__DATABASE: getproperty
-      EMQX_AUTHORIZATION__SOURCES__2__USERNAME: getproperty_mqtt
-      EMQX_AUTHORIZATION__SOURCES__2__PASSWORD: ${GETPROPERTY_MQTT_DB_PASSWORD}
-      EMQX_AUTHORIZATION__SOURCES__2__QUERY: "SELECT permission, action, topic FROM smart.mqtt_acl WHERE username = $${username} AND revoked_at IS NULL"
+      EMQX_AUTHORIZATION__CACHE__TTL: 1m # a retired gateway loses its topics within a minute (the API also kicks it)
+      EMQX_AUTHORIZATION__SOURCES: >-
+        [{type = file, enable = true, path = "/opt/emqx/etc/platform-acl.conf"},
+         {type = http, enable = true, method = post,
+          url = "http://getproperty-api:3000/internal/emqx/authz",
+          headers {"content-type" = "application/json", "x-emqx-auth-token" = "${GETPROPERTY_EMQX_AUTH_TOKEN:-}"},
+          body {username = "$${username}", clientid = "$${clientid}", topic = "$${topic}", action = "$${action}",
+                qos = "$${qos}", retain = "$${retain}", peerhost = "$${peerhost}"},
+          request_timeout = "5s", pool_size = 8}]
       EMQX_PROMETHEUS__ENABLE: "true"
     volumes:
       - /data/emqx:/opt/emqx/data
-      - ./emqx/getproperty-acl.conf:/opt/emqx/etc/getproperty-acl.conf:ro
+      - ./emqx/platform-acl.conf:/opt/emqx/etc/platform-acl.conf:ro
     networks: [collective]
     expose: ["1883", "8083", "18083"]
-    depends_on:
-      postgres:
-        condition: service_healthy
     deploy:
       resources:
         limits: { memory: 512M }

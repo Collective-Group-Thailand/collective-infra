@@ -1,14 +1,16 @@
 #!/bin/bash
 # getproperty's database roles (getproperty-api docs/deployment.md §3). Runs once on an empty data directory after
 # 10-products.sh; idempotent, so on a box initialised before this file existed run it by hand (SSM):
-#   docker exec -e GETPROPERTY_MQTT_DB_PASSWORD="…" platform-postgres-1 bash /docker-entrypoint-initdb.d/20-getproperty.sh
+#   docker exec platform-postgres-1 bash /docker-entrypoint-initdb.d/20-getproperty.sh
 #
 # The product login `getproperty` is NOCREATEROLE and its migrations (@collective/asset-core 0001, app 0010) expect
 # these NOLOGIN group roles; gp_platform needs BYPASSRLS, which only a superuser can grant. The app runs as
 # `getproperty` and switches per transaction (`SET LOCAL ROLE gp_app` / `gp_platform`: DATABASE_APP_ROLE /
 # DATABASE_PLATFORM_ROLE in the app secret), so row-level security applies to every tenant query.
-# `getproperty_mqtt` is EMQX's login for the authorization source: member of gp_mqtt, which reads only the live
-# rows of smart.mqtt_acl (RLS policy of migration 0010).
+# EMQX no longer reads PostgreSQL (getproperty-api D-235, blueprint T-7: HTTP authn/authz on getproperty-api), so
+# there is no broker login. `gp_mqtt` survives only as a NOLOGIN role without members: getproperty-api's migration 0010
+# (immutable, applied by the NOCREATEROLE product login) still grants to it and creates a policy for it; drop it by
+# hand once getproperty-api ships the migration that removes that policy (docs/PROGRESS.md, needs from getproperty-api).
 set -euo pipefail
 
 psql -v ON_ERROR_STOP=1 --username postgres --dbname postgres <<-'SQL'
@@ -23,21 +25,20 @@ psql -v ON_ERROR_STOP=1 --username postgres --dbname postgres <<-'SQL'
     END LOOP;
   END
   $roles$;
-  GRANT gp_owner, gp_app, gp_platform, gp_reporting, gp_mqtt TO getproperty;
+  GRANT gp_owner, gp_app, gp_platform, gp_reporting TO getproperty;
 SQL
 
-if [ -n "${GETPROPERTY_MQTT_DB_PASSWORD:-}" ]; then
-  psql -v ON_ERROR_STOP=1 --username postgres --dbname postgres -v pw="$GETPROPERTY_MQTT_DB_PASSWORD" <<-'SQL'
-    SELECT format('CREATE ROLE getproperty_mqtt LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD %L', :'pw')
-     WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'getproperty_mqtt') \gexec
-    SELECT format('ALTER ROLE getproperty_mqtt PASSWORD %L', :'pw') \gexec
-    GRANT gp_mqtt TO getproperty_mqtt;
-    GRANT CONNECT ON DATABASE getproperty TO getproperty_mqtt;
-    ALTER ROLE getproperty_mqtt SET statement_timeout = '2s';
+# Boxes initialised with the PostgreSQL ACL source (before T-7): retire EMQX's login. Idempotent.
+psql -v ON_ERROR_STOP=1 --username postgres --dbname postgres <<-'SQL'
+  DO $retire$
+  BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'getproperty_mqtt') THEN
+      REVOKE CONNECT ON DATABASE getproperty FROM getproperty_mqtt;
+      DROP ROLE getproperty_mqtt;
+    END IF;
+  END
+  $retire$;
 SQL
-else
-  echo "20-getproperty: GETPROPERTY_MQTT_DB_PASSWORD empty — EMQX authorization login not created (gateways are denied)"
-fi
 
 # Extensions the getproperty migrations use (trusted ones the owner could create too; timescaledb is not trusted)
 for ext in timescaledb pgcrypto citext btree_gist pg_trgm; do
