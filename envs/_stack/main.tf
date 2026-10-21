@@ -113,7 +113,6 @@ module "product" {
   ses_domain       = each.value.ses_domain
   route53_zone_id  = each.value.route53_zone_id
   enable_sqs       = each.value.enable_sqs
-  extra_secrets    = each.value.extra_secrets
   release_prefixes = each.value.release_prefixes
 }
 

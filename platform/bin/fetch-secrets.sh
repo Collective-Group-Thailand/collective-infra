@@ -48,24 +48,35 @@ fetch_product() {
   json=$(secret_json "$product/app")
   [ -n "$json" ] || die "secret ${SECRETS_PREFIX}/${product}/app is empty"
   jq -e '._placeholder' <<<"$json" >/dev/null && die "secret ${SECRETS_PREFIX}/${product}/app still has the placeholder value"
+
+  # One secret per product per env (locked 2026-10-21): collective/<env>/<product>/app. Keys of the form
+  # <COMPONENT>__<KEY> belong to one component only (getproperty: WEB__…, LIFF__…, MQTT_TLS__…) and never reach the
+  # product's main env file, so a front end still never receives the API's secrets and the API never gets the front
+  # ends' session keys.
   : > "$out"; chmod 0600 "$out"
-  json_to_env "$json" >> "$out"
+  json_to_env "$(jq 'with_entries(select((.key | index("__")) as $i | $i == null or $i == 0))' <<<"$json")" >> "$out"
   mv "$out" "$RUN_DIR/$product.env"
   log "$product secrets rendered ($(wc -l < "$RUN_DIR/$product.env") keys)"
 
-  # Per-component env files a product compose file asks for (`env_file: /run/collective/<product>-<component>.env`,
-  # e.g. getproperty-web) come from collective/<env>/<product>/<component>, so a front end never receives the API's
-  # secrets. A missing / placeholder secret renders an empty file (compose needs the file to exist).
-  local compose="$PLATFORM_DIR/products/$product/docker-compose.yml" comp cjson
-  for comp in $(grep -oE "/run/collective/${product}-[a-z0-9-]+\.env" "$compose" 2>/dev/null | sed -E "s#.*/${product}-(.*)\.env#\1#" | sort -u); do
+  # Per-component env files: /run/collective/<product>-<component>.env, the prefix stripped (WEB__SESSION_SECRET →
+  # SESSION_SECRET in <product>-web.env; MQTT_TLS__CA_PEM → CA_PEM in <product>-mqtt-tls.env). Rendered for every
+  # prefix present and for every `env_file: /run/collective/<product>-<component>.env` the compose file asks for
+  # (an empty file when the secret has no key for it — compose needs the file to exist).
+  local compose="$PLATFORM_DIR/products/$product/docker-compose.yml" comp prefix cjson wanted
+  wanted=$(grep -oE "/run/collective/${product}-[a-z0-9-]+\.env" "$compose" 2>/dev/null | sed -E "s#.*/${product}-(.*)\.env#\1#" | sort -u || true)
+  for comp in $( { jq -r 'keys[] | (index("__")) as $i | select($i != null and $i > 0) | .[:$i] | ascii_downcase | gsub("_"; "-")' <<<"$json"
+                   printf '%s\n' $wanted; } | sort -u); do
+    if ! [[ "$comp" =~ ^[a-z][a-z0-9-]*$ ]]; then log "WARN: $product: ignoring keys with component prefix '$comp'"; continue; fi
+    prefix="$(tr 'a-z-' 'A-Z_' <<<"$comp")__"
+    cjson=$(jq --arg p "$prefix" 'with_entries(select((.key | startswith($p)) and (.key | length) > ($p | length)) | .key |= .[($p | length):])' <<<"$json")
     out="$RUN_DIR/$product-$comp.env.tmp"; : > "$out"; chmod 0600 "$out"
-    cjson=$(secret_json "$product/$comp")
-    if [ -n "$cjson" ] && ! jq -e '._placeholder' <<<"$cjson" >/dev/null; then
-      json_to_env "$cjson" >> "$out"
-    else
-      log "WARN: secret ${SECRETS_PREFIX}/${product}/${comp} is empty — $product-$comp.env rendered empty"
-    fi
+    json_to_env "$cjson" >> "$out"
     mv "$out" "$RUN_DIR/$product-$comp.env"
+    if [ "$cjson" = "{}" ]; then
+      log "WARN: ${SECRETS_PREFIX}/${product}/app has no ${prefix}* keys — $product-$comp.env rendered empty"
+    else
+      log "$product-$comp secrets rendered ($(wc -l < "$RUN_DIR/$product-$comp.env") keys)"
+    fi
   done
 
   # Product hook (optional): products/<product>/hooks/post-secrets.sh — e.g. getproperty's MQTT TLS files.

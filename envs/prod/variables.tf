@@ -50,14 +50,13 @@ variable "ecr_repositories" {
   type = list(string)
 }
 
-# extra_secrets / release_prefixes must be listed here too, or the type conversion drops them from terraform.tfvars
+# release_prefixes must be listed here too, or the type conversion drops them from terraform.tfvars
 variable "products" {
   type = map(object({
     cors_origins     = optional(list(string), [])
     ses_domain       = optional(string)
     route53_zone_id  = optional(string)
     enable_sqs       = optional(bool, false)
-    extra_secrets    = optional(list(string), [])
     release_prefixes = optional(list(string), [])
   }))
 }

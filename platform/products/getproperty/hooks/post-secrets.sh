@@ -4,7 +4,8 @@
 #     secret collective/<env>/platform/device-ca (bin/render-device-ca.sh renders the same secret for EMQX and Caddy)
 #     → DEVICE_CA_CERT / DEVICE_CA_KEY / DEVICE_CA_CHAIN (base64 PEM) in /run/collective/getproperty.env, replacing
 #     any copy still in the product secret. Interim (box set up before T-6): when the platform secret is empty the
-#     product secret's own DEVICE_CA_* stay, and the legacy getproperty/mqtt-tls secret still feeds EMQX's listener.
+#     product secret's own DEVICE_CA_* stay, and MQTT_TLS__SERVER_PEM / MQTT_TLS__SERVER_KEY / MQTT_TLS__CA_PEM of
+#     the product secret (the former getproperty/mqtt-tls secret, T-4) still feed EMQX's listener.
 #  2. The API's MQTT user on EMQX's internal listener (MQTT_USERNAME / MQTT_PASSWORD of the app secret):
 #     bootstrap file for a fresh EMQX + an upsert through EMQX's REST API for a running one.
 # UNVERIFIED on a live box (written against the EMQX 5.8 and Caddy 2.10 documentation).
@@ -24,10 +25,10 @@ if [ -n "$ca" ] && jq -e '.issuing_cert_pem and .issuing_key_pem and .ca_chain_p
   chmod 0600 "$ENV_FILE.next"; mv "$ENV_FILE.next" "$ENV_FILE"
 else
   log "WARN: ${SECRETS_PREFIX}/platform/device-ca not set — the API keeps DEVICE_CA_* from its own secret (interim)"
-  tls=$(secret_json getproperty/mqtt-tls)
-  if [ -n "$tls" ] && jq -e '.server_pem and .server_key and .ca_pem' <<<"$tls" >/dev/null 2>&1; then
-    install_device_tls "$(jq -r .server_pem <<<"$tls")" "$(jq -r .server_key <<<"$tls")" "$(jq -r .ca_pem <<<"$tls")" \
-      "getproperty/mqtt-tls (interim)"
+  tls=$(secret_json getproperty/app)
+  if [ -n "$tls" ] && jq -e '.MQTT_TLS__SERVER_PEM and .MQTT_TLS__SERVER_KEY and .MQTT_TLS__CA_PEM' <<<"$tls" >/dev/null 2>&1; then
+    install_device_tls "$(jq -r .MQTT_TLS__SERVER_PEM <<<"$tls")" "$(jq -r .MQTT_TLS__SERVER_KEY <<<"$tls")" \
+      "$(jq -r .MQTT_TLS__CA_PEM <<<"$tls")" "getproperty/app MQTT_TLS__* (interim)"
   fi
 fi
 

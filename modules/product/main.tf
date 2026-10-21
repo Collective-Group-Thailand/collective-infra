@@ -89,6 +89,9 @@ resource "aws_s3_bucket_cors_configuration" "assets" {
 }
 
 # --- Secrets Manager: shell only. Values are set by hand / rotation, never by Terraform -----------
+# Exactly ONE secret per product per environment (locked 2026-10-21). Component-only keys use a prefix
+# (<COMPONENT>__KEY, e.g. getproperty WEB__… / LIFF__…) that platform/bin/fetch-secrets.sh splits into the
+# component's own env file.
 resource "aws_secretsmanager_secret" "app" {
   name                    = "${local.secret_path}/app"
   description             = "${var.product} ${var.environment}: DATABASE_URL, REDIS_URL, JWT keys, 3rd-party API keys (JSON)"
@@ -100,24 +103,6 @@ resource "aws_secretsmanager_secret_version" "app_placeholder" {
   secret_id     = aws_secretsmanager_secret.app.id
   secret_string = jsonencode({ _placeholder = "fill in via console/CLI — see README §3" })
 
-  lifecycle {
-    ignore_changes = [secret_string]
-  }
-}
-
-# Additional shells (same rules as `app`): fetch-secrets.sh renders /run/collective/<product>-<name>.env for
-# components that ask for it, product hooks read others (getproperty: mqtt-tls).
-resource "aws_secretsmanager_secret" "extra" {
-  for_each                = toset(var.extra_secrets)
-  name                    = "${local.secret_path}/${each.value}"
-  recovery_window_in_days = aws_secretsmanager_secret.app.recovery_window_in_days
-  tags                    = local.tags
-}
-
-resource "aws_secretsmanager_secret_version" "extra_placeholder" {
-  for_each      = aws_secretsmanager_secret.extra
-  secret_id     = each.value.id
-  secret_string = jsonencode({ _placeholder = "fill in via console/CLI — see README §3" })
   lifecycle {
     ignore_changes = [secret_string]
   }
