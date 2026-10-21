@@ -14,6 +14,10 @@ output "secret_name" {
   value = aws_secretsmanager_secret.app.name
 }
 
+output "extra_secret_names" {
+  value = [for s in aws_secretsmanager_secret.extra : s.name]
+}
+
 output "policy_arn" {
   value = aws_iam_policy.product.arn
 }

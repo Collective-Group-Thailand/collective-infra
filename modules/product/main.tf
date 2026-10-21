@@ -105,6 +105,24 @@ resource "aws_secretsmanager_secret_version" "app_placeholder" {
   }
 }
 
+# Additional shells (same rules as `app`): fetch-secrets.sh renders /run/collective/<product>-<name>.env for
+# components that ask for it, product hooks read others (getproperty: mqtt-tls).
+resource "aws_secretsmanager_secret" "extra" {
+  for_each                = toset(var.extra_secrets)
+  name                    = "${local.secret_path}/${each.value}"
+  recovery_window_in_days = aws_secretsmanager_secret.app.recovery_window_in_days
+  tags                    = local.tags
+}
+
+resource "aws_secretsmanager_secret_version" "extra_placeholder" {
+  for_each      = aws_secretsmanager_secret.extra
+  secret_id     = each.value.id
+  secret_string = jsonencode({ _placeholder = "fill in via console/CLI — see README §3" })
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
 # --- SES: sending identity ---------------------------------------------------------------------
 resource "aws_sesv2_email_identity" "domain" {
   count          = var.ses_domain != null ? 1 : 0

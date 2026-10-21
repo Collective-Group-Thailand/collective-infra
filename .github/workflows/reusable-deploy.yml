@@ -25,6 +25,10 @@ on:
       migrate:
         type: boolean
         default: true
+      component:
+        description: "Optional: deploy one image of a multi-repo product (getproperty: web | liff) — see deploy-product.sh"
+        type: string
+        default: ""
 
 permissions:
   id-token: write
@@ -64,9 +68,9 @@ jobs:
           id=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
             --document-name AWS-RunShellScript \
-            --comment "deploy ${{ inputs.product }} ${{ inputs.image_tag }} (${{ github.repository }}@${GITHUB_SHA::7})" \
+            --comment "deploy ${{ inputs.product }}${{ inputs.component != '' && format('/{0}', inputs.component) || '' }} ${{ inputs.image_tag }} (${{ github.repository }}@${GITHUB_SHA::7})" \
             --timeout-seconds 900 \
-            --parameters '{"commands":["/opt/collective/platform/bin/deploy-product.sh ${{ inputs.product }} ${{ inputs.image_tag }} ${{ inputs.migrate && '' || '--no-migrate' }}"],"executionTimeout":["900"]}' \
+            --parameters '{"commands":["/opt/collective/platform/bin/deploy-product.sh ${{ inputs.product }} ${{ inputs.image_tag }} ${{ inputs.migrate && '' || '--no-migrate' }} ${{ inputs.component != '' && format('--component {0}', inputs.component) || '' }}"],"executionTimeout":["900"]}' \
             --query Command.CommandId --output text)
           echo "command_id=$id" >> "$GITHUB_OUTPUT"
 

@@ -41,11 +41,15 @@ jobs:
         run: |
           case "$PRODUCT" in
             getpack)     images="getpack/api getpack/web" ;;
-            getproperty) images="getproperty/api getproperty/web" ;;
+            getproperty) images="getproperty/api getproperty/web getproperty/liff" ;;
             getpop)      images="getpop/api" ;;
           esac
-          tag="$WANT"
+          # getproperty's images come from three repos (different sha tags): with no explicit tag each image
+          # resolves its own :uat; the output tag is the first image's (the api — IMAGE_TAG on the box), and the
+          # front ends run their moving :prod tag there (products/getproperty/docker-compose.yml).
+          first=""
           for img in $images; do
+            tag="$WANT"
             if [ -z "$tag" ]; then
               # resolve :uat → its sha-* sibling tag
               tag=$(aws ecr describe-images --repository-name "$img" --image-ids imageTag=uat \
@@ -57,8 +61,9 @@ jobs:
             aws ecr put-image --repository-name "$img" --image-tag prod --image-manifest "$manifest" >/dev/null \
               || echo "$img:prod already points at $tag"
             echo "$img: $tag → prod"
+            [ -n "$first" ] || first="$tag"
           done
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "tag=$first" >> "$GITHUB_OUTPUT"
 
   deploy:
     needs: retag

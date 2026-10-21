@@ -53,3 +53,13 @@ variable "enable_sqs" {
   type        = bool
   default     = false
 }
+
+variable "extra_secrets" {
+  description = "More Secrets Manager shells under <prefix>/<env>/<product>/ (e.g. per-component env files: web, liff)"
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for n in var.extra_secrets : can(regex("^[a-z][a-z0-9-]{1,30}$", n)) && n != "app"])
+    error_message = "extra_secrets are short lowercase slugs (not \"app\")"
+  }
+}

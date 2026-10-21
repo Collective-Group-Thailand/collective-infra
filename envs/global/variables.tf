@@ -10,6 +10,7 @@ variable "ecr_repositories" {
     "getpack/web",
     "getproperty/api",
     "getproperty/web",
+    "getproperty/liff",
     "getpop/api",
   ]
 }

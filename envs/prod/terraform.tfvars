@@ -12,13 +12,13 @@ github_org   = "collective-group-th"      # TODO: real org
 
 product_repos = [
   "getpack-api", "getpack-web",
-  "getproperty-api", "getproperty-web",
+  "getproperty-api", "getproperty-web", "getproperty-liff",
   "getpop-api",
 ]
 
 ecr_repositories = [
   "getpack/api", "getpack/web",
-  "getproperty/api", "getproperty/web",
+  "getproperty/api", "getproperty/web", "getproperty/liff",
   "getpop/api",
 ]
 
@@ -29,8 +29,11 @@ products = {
     # route53_zone_id = "Z..."
   }
   getproperty = {
-    cors_origins = ["https://getproperty.example"] # TODO domain
-    ses_domain   = null
+    # browser uploads (presigned PUT) from the owner console, staff PWA, admin and the LIFF app — TODO domain
+    cors_origins = ["https://app.getproperty.example", "https://staff.getproperty.example", "https://admin.getproperty.example", "https://liff.getproperty.example"]
+    ses_domain   = null # enable when the domain is decided (SES_FROM_ADDRESS no-reply@<domain>)
+    # front-end env files and the EMQX device-listener TLS (getproperty-api docs/deployment.md §3)
+    extra_secrets = ["web", "liff", "mqtt-tls"]
   }
   getpop = {
     cors_origins = ["https://getpop.example"] # TODO domain
