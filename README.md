@@ -13,14 +13,14 @@ AWS account (Thailand region)
 └── envs/prod     VPC · EC2 t4g.xlarge (24×7)                · EIP · EBS /data · S3 · Secrets · SES · deploy role
 
 each EC2 box (/opt/collective/infra = this repo)
-└── platform/     caddy · postgres(timescaledb-ha pg18) · valkey · emqx · alloy  +  products/<p>/docker-compose.yml
+└── platform/     caddy · postgres(timescaledb-ha pg18) · valkey · emqx · clamav · alloy  +  products/<p>/docker-compose.yml
 ```
 
 ## 1. Prerequisites
 
 - Terraform ≥ 1.10, AWS CLI v2, an AWS profile with admin on the Collective account
 - Region **Asia Pacific (Thailand)** enabled: Account → AWS Regions → enable `ap-southeast-7`
-- GitHub org with repos `collective-infra`, `getpack-api`, `getpack-web`, `getproperty-api`, `getproperty-web`, `getpop-api`
+- GitHub org with repos `collective-infra`, `getpack-api`, `getpack-web`, `getproperty-api`, `getproperty-web`, `getproperty-liff`, `getpop-api`
 
 ## 2. Bootstrap (once)
 
@@ -53,17 +53,19 @@ After `apply` of an env, do these by hand (one time each):
    | `collective/<env>/platform/deploy-key` | *raw* private key (read-only GitHub deploy key for this repo) |
    | `collective/<env>/platform/postgres` | `{"superuser_password":"…","getpack_password":"…","getproperty_password":"…","getpop_password":"…"}` |
    | `collective/<env>/platform/valkey` | `{"password":"…"}` |
-   | `collective/<env>/platform/emqx` | `{"dashboard_password":"…"}` |
+   | `collective/<env>/platform/emqx` | `{"dashboard_password":"…","getproperty_auth_token":"<openssl rand -hex 32>"}` — the token is the `x-emqx-auth-token` header of EMQX's HTTP authn/authz calls to getproperty-api; the getproperty hook gives the API the same value as `EMQX_AUTH_TOKEN`. Empty = every gateway is refused |
+   | `collective/<env>/platform/device-ca` | `{"ca_chain_pem","issuing_cert_pem","issuing_key_pem","broker_cert_pem","broker_key_pem"}` (PEM text) — the IoT device CA (getproperty-api D-235): the chain that verifies gateway certificates (EMQX 8883, Caddy `DEVICE_HOST`) and that gateways receive as `caChainPem`; the issuing certificate + key getproperty-api signs gateway CSRs with (rendered into its env as `DEVICE_CA_CERT` / `DEVICE_CA_KEY` / `DEVICE_CA_CHAIN`, base64); the broker server certificate for `MQTT_HOST` (leaf first + issuing, from `pnpm device:broker-cert --host <MQTT_HOST>` in getproperty-api; 397 days) used by EMQX on 8883 and by Caddy for `wss://<MQTT_HOST>/mqtt`. `bin/render-device-ca.sh` installs it (hourly refresh; the listener restarts on change) |
    | `collective/<env>/platform/grafana` | `{"prometheus_url":"https://prometheus-….grafana.net/api/prom/push","prometheus_user":"123","loki_url":"https://logs-….grafana.net/loki/api/v1/push","loki_user":"456","tempo_url":"https://tempo-….grafana.net/otlp","tempo_user":"789","api_key":"glc_…"}` |
    | `collective/<env>/platform/caddy` | `{"acme_email":"ops@…","basic_auth_users":["ops:$2a$14$…"]}` (`caddy hash-password`) |
-   | `collective/<env>/<product>/app` | flat JSON of the product's env — `DATABASE_URL`, `REDIS_URL`, JWT keys, 3rd-party keys. Hostnames inside the docker network: `postgres`, `valkey`, `platform-emqx-1`, `platform-alloy-1` |
-   | `collective/<env>/getproperty/web`, `…/getproperty/liff` | flat JSON of each front end's own env (session secrets, hosts, public URLs; for liff `NEXT_PUBLIC_LIFF_ID` — that environment's LINE channel —, `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `NEXT_PUBLIC_SENTRY_DSN`, `NEXT_PUBLIC_ENV_BADGE`, `NEXT_PUBLIC_ASSET_BASE_URL`) → `/run/collective/getproperty-<web\|liff>.env` — the front ends never get the API's secrets. Both read every value at run time, `NEXT_PUBLIC_*` included (one image per front end for every environment, so `promote.yml` can ship the UAT image) |
-   | `collective/<env>/getproperty/mqtt-tls` | `{"server_pem","server_key","ca_pem"}` — EMQX's 8883 device listener (mutual TLS): server certificate issued from getproperty's device CA (`pnpm device:broker-cert --host <MQTT_HOST>` in getproperty-api) and the CA that verifies gateways. `products/getproperty/hooks/post-secrets.sh` installs it and the Caddy device-host trust pool |
+   | `collective/<env>/<product>/app` | **the one secret of the product in that env** (locked 2026-10-21): flat JSON of the product's env — `DATABASE_URL`, `REDIS_URL`, JWT keys, 3rd-party keys. Hostnames inside the docker network: `postgres`, `valkey`, `platform-emqx-1`, `platform-clamav-1`, `platform-alloy-1`. Keys for one component only carry its prefix, `<COMPONENT>__KEY`: `fetch-secrets.sh` renders them into `/run/collective/<product>-<component>.env` with the prefix stripped and never into the main env file |
+   | getproperty in `collective/<env>/getproperty/app` | API keys unprefixed (full list: getproperty-api `docs/deployment.md` §3; `MQTT_USERNAME` / `MQTT_PASSWORD` = the API's user on EMQX's internal listener; `MQTT_PUBLIC_WS_URL=wss://<MQTT_HOST>/mqtt` offers gateways the WSS fallback). **`WEB__…`** → `getproperty-web.env` and **`LIFF__…`** → `getproperty-liff.env`: each front end's own env (session secrets, hosts, public URLs; for liff `LIFF__NEXT_PUBLIC_LIFF_ID` — that environment's LINE channel —, `…NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `…NEXT_PUBLIC_SENTRY_DSN`, `…NEXT_PUBLIC_ENV_BADGE`, `…NEXT_PUBLIC_ASSET_BASE_URL`). Both read every value at run time, `NEXT_PUBLIC_*` included (one image per front end for every environment, so `promote.yml` can ship the UAT image). **`MQTT_TLS__SERVER_PEM` / `__SERVER_KEY` / `__CA_PEM`**: interim only, used for EMQX's listener while `platform/device-ca` is empty. The device CA itself (`DEVICE_CA_*`) comes from `platform/device-ca` and replaces any copy here |
 
-   getproperty also needs `getproperty_mqtt_password` in `collective/<env>/platform/postgres` (EMQX's read-only
-   login for `smart.mqtt_acl`, created by `postgres/init/20-getproperty.sh`) and `MQTT_USERNAME` / `MQTT_PASSWORD` in
-   its app secret (the API's user on EMQX's internal listener). The full key list of `getproperty/app` is in
-   getproperty-api `docs/deployment.md` §3.
+   **Moving from the per-component secrets** (boxes set up before T-4/T-6/T-7): copy `getproperty/web` and
+   `getproperty/liff` into `getproperty/app` with the `WEB__` / `LIFF__` prefixes and `getproperty/mqtt-tls` +
+   `DEVICE_CA_CERT` / `DEVICE_CA_KEY` into `platform/device-ca`, **before** `terraform apply` deletes the three shells
+   (recovery window 7 days uat / 30 days prod). `getproperty_mqtt_password` in `platform/postgres` is no longer used:
+   EMQX authorises gateways through getproperty-api (HTTP), and `postgres/init/20-getproperty.sh` (run it by hand once
+   via SSM on such a box) drops the `getproperty_mqtt` login.
 
    **Release artefacts** (getproperty-edge OTA, getproperty-api D-231): products with `release_prefixes` (getproperty:
    `releases/`) keep signed binaries in their assets bucket under that prefix. The instance role can only read there
@@ -138,10 +140,21 @@ Notes
   package is on GitHub Packages) passes `extra_repository` / `extra_ref` / `extra_path` / `build_contexts` and the
   `extra_repository_token` secret to `reusable-build-push.yml`.
 - Contract the compose templates expect from images: `/health` on `:3000` (api), `/api/healthz` on `:3000` (web),
-  worker health on `:3001`, Prometheus `/metrics`, OTLP to `$OTEL_EXPORTER_OTLP_ENDPOINT`.
-  Migration = the product compose file's one-shot `migrate` service (getpack: `npx prisma migrate deploy`;
-  getproperty: `node dist/src/migrate.js` — asset-core `core` schema first, then its Prisma migrations, then the
-  optional TimescaleDB step).
+  worker-type health on `:3001` in each container (getproperty: worker **and** ingest, `INGEST_HEALTH_PORT=3001`),
+  Prometheus `/metrics`, OTLP to `$OTEL_EXPORTER_OTLP_ENDPOINT`, S3 via the instance role, DB pool ≤ 15 (api) / ≤ 10
+  (worker). **Migrations** = the product compose file's one-shot `migrate` service, which `deploy-product.sh` runs
+  before `up` (api image only, never for `--component web|liff`):
+  - getpack / getpop: `npx prisma migrate deploy`;
+  - getproperty: **`node dist/src/migrate.js`** — asset-core `core` schema first, then `prisma/migrations` recorded in
+    `_prisma_migrations` exactly like Prisma, then the TimescaleDB step (`TIMESCALEDB_MIGRATION`), then the
+    idempotent reference seed; the image has no Prisma CLI (ADR in getproperty-api, blueprint T-3).
+- **PDF rendering**: one Chromium per box — getpack's worker consumes the shared BullMQ queue **`pdf-render`** (HTML
+  in → S3 key out, Thai fonts, A4 + 80 mm). The queue contract is in getproperty-api `docs/pdf-render-queue.md`
+  (D-236); getpack's worker owns the consumer. Until it is deployed getproperty renders with its own Chromium under
+  ADR-0012 / O-015 (worker 1.5 GB: `GETPROPERTY_PDF_RENDERER_MODE=real`, `GETPROPERTY_WORKER_MEMORY=1536M` in
+  `platform/env/<env>.env`); switch both (`queue`, `512M`) when the consumer is live.
+- **Upload virus scan**: the platform's shared ClamAV, `CLAMAV_HOST=platform-clamav-1`, `CLAMAV_PORT=3310` (INSTREAM,
+  streams ≤ 40 MB).
 
 ## 5. Day-2 operations
 
@@ -153,14 +166,17 @@ Notes
 | Roll back | `sudo /opt/collective/platform/bin/rollback.sh <product>` (deploy also auto-rolls back on failed health) |
 | Backups | nightly 01:30 pgBackRest (full Sun / diff) → `s3://collective-<env>-backups/pgbackrest/<env>`; EBS snapshot 02:00 (DLM) |
 | Verify backups | `docker exec platform-postgres-1 pgbackrest --stanza=collective info` |
-| **Restore drill (monthly)** | on UAT: `sudo /opt/collective/platform/bin/restore-drill.sh prod` → report in `s3://…-backups/drills/` |
+| **Restore drill (monthly)** | on UAT: `sudo /opt/collective/platform/bin/restore-drill.sh prod` → report in `s3://…-backups/drills/`: per-database sanity, each product's `hooks/drill-smoke.sh` (getproperty: migrations complete + `node dist/src/drill-smoke.js` in the deployed api image), `rto_seconds` against the 30-min target, `RESULT: OK\|FAIL` (exit 1 on FAIL). The restored instance sits on an `--internal` network (no Valkey/EMQX/S3/internet) |
+| Backups off-region | prod: DLM copies each daily snapshot to `ap-northeast-1` (encrypted, 7 days) — PDPA s.28 note in PLAN.md §0 |
 | PITR | `restore-drill.sh prod --pitr "2026-11-01 02:00:00+07"` to inspect; real restore = stop products, same `pgbackrest restore` into `/data/postgres` |
 | Wake UAT off-hours | `platform/bin/wake.sh uat` (stops again at 20:00) |
 | Change hostnames | edit `platform/caddy/sites.<env>.yml` → PR → `platform-deploy.yml` |
 | Resize box | change `instance_type` in `envs/<env>/terraform.tfvars` → PR (stop/start, ~3 min downtime) |
 | Grow /data | bump `data_volume_size_gb` → apply → on box `sudo xfs_growfs /data` |
 | Rotate a secret | update Secrets Manager → `secrets-refresh.timer` renders hourly → next deploy picks it up (or `deploy-product.sh <p> <same-tag>`) |
-| Peel a product to RDS | `pg_dump` its database → RDS; change only that product's `DATABASE_URL` secret; nothing else moves |
+| Move a database to a DB box | trigger (PLAN.md §0): a product database > 100 GB or `/data` > 70 %. Second EC2 box with the same `timescaledb-ha` image (compose + SSM), `pg_dump`/restore or a streaming replica, then change only that product's `DATABASE_URL`. EC2 only — never RDS |
+| Memory / mode knobs | `platform/env/<env>.env` (non-secret, PR-reviewed): `POSTGRES_MEMORY_LIMIT`, `CLAMAV_MEMORY_LIMIT`, `GETPROPERTY_WORKER_MEMORY`, `GETPROPERTY_PDF_RENDERER_MODE` → `platform-deploy.yml`, then redeploy the product |
+| Device CA / broker certificate | put the new JSON into `collective/<env>/platform/device-ca` → hourly refresh (or `bin/fetch-secrets.sh platform`) restarts EMQX's ssl listener and reloads Caddy; redeploy getproperty-api so it signs with the new issuing key. Broker certificate: 397 days |
 
 ## 6. Conventions
 
@@ -168,3 +184,21 @@ Notes
 - Never `terraform apply` prod from a laptop once CI works — use the PR → approval path.
 - `prevent_destroy` guards the data volume, backup bucket and asset buckets. Removing it is a reviewed PR.
 - No secrets in this repo, in tfvars, or in GitHub secrets: Secrets Manager is the only store; CI uses OIDC roles.
+
+## 7. Not verified in this repository (UNVERIFIED)
+
+There are no `terraform`, `docker`, `caddy` or `emqx` binaries where this repo was last edited; these were written
+against the vendors' documentation and must be proven on the first UAT apply / deploy:
+
+- `terraform fmt -check` / `validate` of every root — in particular `cross_region_copy_rule` (`target`, `cmk_arn`)
+  on `aws_dlm_lifecycle_policy` with provider 6.x, and the DLM copy from the opt-in region `ap-southeast-7`.
+- EMQX 5.8: HOCON values in env vars for the per-listener `authentication` chains (8883, 8083) and for
+  `authorization.sources`; the HTTP placeholders `${cert_common_name}`, `${cert_subject}`, `${qos}`, `${retain}`;
+  `peer_cert_as_username = cn` before HTTP authn; the built-in-database bootstrap file.
+- Caddy 2.10: `tls <cert> <key>` for `MQTT_HOST` (device-CA certificate), WebSocket proxying with
+  `stream_close_delay`, `client_auth` + `trust_pool file` on `DEVICE_HOST`, the `/internal/*` 404 snippet.
+- ClamAV `clamav/clamav-debian:1.4`: the replaced `clamd.conf` with the image's entrypoint, `clamdcheck.sh`, the
+  `/data/clamav` ownership, and the steady RSS (≈ 1.1 GB) inside the 1,152 MB limit.
+- `restore-drill.sh` end to end (the `--internal` network, the getproperty smoke, `node dist/src/drill-smoke.js`, which
+  getproperty-api provides).
+- Compose interpolation of `${GETPROPERTY_WORKER_MEMORY:-1536M}` in `deploy.resources.limits.memory`.

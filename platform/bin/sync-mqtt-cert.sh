@@ -1,9 +1,9 @@
 #!/bin/bash
 # Copy the Let's Encrypt cert Caddy holds for the platform hostname into EMQX's data dir and reload
 # the SSL listener when it changed. Caddy renews ~30 days before expiry; the timer runs daily.
-# NOTE (getproperty/r1-platform): the 8883 listener now serves getproperty's gateways with mutual TLS and a server
-# certificate from getproperty's device CA (products/getproperty/hooks/post-secrets.sh) — gateways do not trust
-# Let's Encrypt. This copy is kept for a future Let's Encrypt listener and no longer restarts ssl:default.
+# NOTE: the 8883 listener serves IoT gateways with mutual TLS and a server certificate from the platform device CA
+# (bin/render-device-ca.sh, collective/<env>/platform/device-ca) — gateways do not trust Let's Encrypt. This copy is
+# kept for a future Let's Encrypt listener and never touches the device listener.
 source "$(dirname "$0")/lib.sh"
 
 HOST="${MQTT_HOSTNAME:-$PLATFORM_HOSTNAME}"
