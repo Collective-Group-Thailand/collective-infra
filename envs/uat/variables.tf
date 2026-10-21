@@ -61,14 +61,17 @@ variable "ecr_repositories" {
   type = list(string)
 }
 
-# release_prefixes must be listed here too, or the type conversion drops them from terraform.tfvars
+# Every attribute (release_prefixes, tmp_expiration_days, pdf_render_producers, …) must be listed here too, or the
+# type conversion drops it from terraform.tfvars
 variable "products" {
   type = map(object({
-    cors_origins     = optional(list(string), [])
-    ses_domain       = optional(string)
-    route53_zone_id  = optional(string)
-    enable_sqs       = optional(bool, false)
-    release_prefixes = optional(list(string), [])
+    cors_origins         = optional(list(string), [])
+    ses_domain           = optional(string)
+    route53_zone_id      = optional(string)
+    enable_sqs           = optional(bool, false)
+    release_prefixes     = optional(list(string), [])
+    tmp_expiration_days  = optional(number, 7)
+    pdf_render_producers = optional(list(string), [])
   }))
 }
 

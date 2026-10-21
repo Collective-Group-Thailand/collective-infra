@@ -35,6 +35,9 @@ products = {
     cors_origins = ["https://getpack.co", "https://www.getpack.co"]
     ses_domain   = "getpack.co"
     # route53_zone_id = "Z..."
+    # getpack's worker consumes the shared pdf-render queue (the one Chromium per box): S3 Get/Put on
+    # collective-<env>-getproperty-assets/tmp/pdf-render/* only (getproperty-api docs/pdf-render-queue.md §6.4)
+    pdf_render_producers = ["getproperty"]
   }
   getproperty = {
     # browser uploads (presigned PUT) from the owner console, staff PWA, admin and the LIFF app — TODO domain
@@ -44,6 +47,9 @@ products = {
     # signed OTA artefacts of getproperty-edge (releases/edge/<version>/<file>): read-only for the instance role,
     # uploaded with the release-publisher policy (getproperty-api docs/deployment.md §5a, D-231)
     release_prefixes = ["releases/"]
+    # tmp/pdf-render/ scratch objects of the shared pdf-render queue (HTML in, PDF out — personal data): 1 day
+    # (getproperty-api docs/pdf-render-queue.md §3)
+    tmp_expiration_days = 1
   }
   getpop = {
     cors_origins = ["https://getpop.example"] # TODO domain

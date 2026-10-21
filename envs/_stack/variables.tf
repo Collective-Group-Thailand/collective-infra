@@ -82,13 +82,17 @@ variable "ecr_repositories" {
 }
 
 variable "products" {
+  # tmp_expiration_days: lifecycle expiry of tmp/ (getproperty 1 — pdf-render scratch objects with personal data);
+  # pdf_render_producers: products whose pdf-render jobs this product consumes (getpack: ["getproperty"]).
   description = "Products hosted in this environment"
   type = map(object({
-    cors_origins     = optional(list(string), [])
-    ses_domain       = optional(string)
-    route53_zone_id  = optional(string)
-    enable_sqs       = optional(bool, false)
-    release_prefixes = optional(list(string), [])
+    cors_origins         = optional(list(string), [])
+    ses_domain           = optional(string)
+    route53_zone_id      = optional(string)
+    enable_sqs           = optional(bool, false)
+    release_prefixes     = optional(list(string), [])
+    tmp_expiration_days  = optional(number, 7)
+    pdf_render_producers = optional(list(string), [])
   }))
 }
 

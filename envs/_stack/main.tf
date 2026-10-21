@@ -102,18 +102,22 @@ resource "aws_secretsmanager_secret" "platform" {
 }
 
 # --- Products --------------------------------------------------------------------------------------
+# tmp_expiration_days / pdf_render_producers: the shared pdf-render queue (getproperty-api docs/pdf-render-queue.md) —
+# tmp/ expires after 1 day on a producer's bucket; the consumer (getpack) may Get/Put its tmp/pdf-render/* only.
 module "product" {
-  for_each         = var.products
-  source           = "../../modules/product"
-  name_prefix      = var.name_prefix
-  environment      = var.environment
-  region           = var.region
-  product          = each.key
-  cors_origins     = each.value.cors_origins
-  ses_domain       = each.value.ses_domain
-  route53_zone_id  = each.value.route53_zone_id
-  enable_sqs       = each.value.enable_sqs
-  release_prefixes = each.value.release_prefixes
+  for_each             = var.products
+  source               = "../../modules/product"
+  name_prefix          = var.name_prefix
+  environment          = var.environment
+  region               = var.region
+  product              = each.key
+  cors_origins         = each.value.cors_origins
+  ses_domain           = each.value.ses_domain
+  route53_zone_id      = each.value.route53_zone_id
+  enable_sqs           = each.value.enable_sqs
+  release_prefixes     = each.value.release_prefixes
+  tmp_expiration_days  = each.value.tmp_expiration_days
+  pdf_render_producers = [for p in each.value.pdf_render_producers : p if p != each.key]
 }
 
 # --- App server ------------------------------------------------------------------------------------
