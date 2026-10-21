@@ -4,6 +4,46 @@ Newest first. Decisions that belong to a product are recorded in that product's 
 `docs/decisions.md`); this file records what was done here, the assumptions taken, and what this repo needs from
 product repos.
 
+## 2026-10-22 — aligned with getproperty-api 74bdcdc (D-239–D-248, ADR-0012–0015, RUNBOOK §§12–15)
+
+| Item | Change |
+|---|---|
+| PDF queue (D-242) | Compose maps `GETPROPERTY_PDF_RENDERER_MODE` → `PDF_RENDERER_MODE` (confirmed) and sets `PDF_RENDER_QUEUE_PREFIX=collective`; Valkey `--databases 16`, **DB 15 = shared platform queues** (`PLATFORM_QUEUES_VALKEY_DB`); getproperty's `post-secrets.sh` writes `PDF_RENDER_REDIS_URL` = `REDIS_URL` with `/15` (a value in the secret wins, warned when not DB 15); getpack's worker comment names the same URL/prefix |
+| S3 (pdf-render §6.4) | `products.getpack.pdf_render_producers = ["getproperty"]` → statement `PdfRenderProducerObjects` (Get/Put on `collective-<env>-getproperty-assets/tmp/pdf-render/*` only); `products.getproperty.tmp_expiration_days = 1` (current + noncurrent versions of `tmp/`) |
+| EMQX (D-244) | Authn/authz bodies checked against `EmqxAuthnRequest` / `EmqxAuthzRequest` — all field names match, no change; api container `EMQX_HTTP_ALLOWED_CIDRS=172.30.0.0/16,127.0.0.0/8` (the `collective` network + loopback); `EMQX_SERVICE_USERNAMES` documented (optional, default `MQTT_USERNAME`) |
+| `gp_mqtt` (0037) | New optional `hooks/post-migrate.sh` step in `deploy-product.sh`; getproperty's hook drops `gp_mqtt` once `20261022000037_0037_emqx_http_auth` is applied (idempotent, warn-only) |
+| Integration events (D-247) | `INTEGRATION_<GETBUILD\|GETPACK>_{TRANSPORT,WEBHOOK_URL,SIGNING_KEYS,VERIFY_KEYS}` documented (README §3, compose header) with docker-network URLs; Caddy answers 404 for `/webhooks/integration/*` on every getproperty host |
+| Provider credentials (D-240) | The three `*_SECRETS_PREFIX` lines removed from compose; README §3 gives the order: `credentials-import` with the prefixes passed by `-e`, check, then delete the sub-path secrets |
+| Drill (D-248) | `dist/src/drill-smoke.js` ships in the image (getproperty-api 6b02d84): the SKIPPED fallback is gone; an image without it fails the drill |
+
+**Assumptions** (founder pre-approved recommendations; most conservative option)
+
+- **Valkey DB 15** for shared queues — not DB 0 as the example in getproperty-api `docs/pdf-render-queue.md` §2 shows:
+  DB 0 is where a URL without a DB number lands, so a misconfigured product could write into the shared queue DB;
+  15 is the highest DB of a 16-DB Valkey and nobody uses it by accident. getproperty keeps DB 2.
+- `PDF_RENDER_REDIS_URL` is derived by the hook rather than kept as a separate secret key, so producer and consumer
+  cannot drift onto different DBs and no second copy of the Valkey password is needed (getpack must set the same
+  `/15` URL in its own secret until it has an equivalent hook).
+- The cross-product S3 grant is attached to getpack's product policy. On one box the instance role is shared (it also
+  carries getproperty's full-bucket policy), so today the grant is the declared contract; it becomes the enforced
+  boundary once getpack's worker runs under its own role (worker box).
+- **`gp_mqtt` stays in `postgres/init/20-getproperty.sh`** (contrary to the literal task "drop it from the init script
+  for fresh boxes"): migration 0010 (immutable) executes `CREATE ROLE gp_mqtt` when it is missing, and the product
+  login is NOCREATEROLE, so a fresh box without the role would fail its first migrate. The role is instead dropped
+  after migrate by the post-migrate hook on fresh and existing boxes alike — the end state (no `gp_mqtt`) is the same.
+- `EMQX_HTTP_ALLOWED_CIDRS` set to the `collective` network + loopback (narrower than the image default, which
+  includes the VPC's 10.0.0.0/8).
+- The drill treats a missing `drill-smoke.js` as a failure: every api image this branch can deploy is newer than
+  6b02d84 (the branch needs the PDF queue env and the EMQX HTTP endpoints of that generation).
+
+**Needs from getproperty-api / getpack** (recorded here; product docs are theirs to change)
+
+1. getproperty-api `docs/pdf-render-queue.md` §2 / `docs/deployment.md` §2–3: name **Valkey DB 15** (`redis://:<pw>@valkey:6379/15`)
+   instead of the `/0` example, and note that collective-infra's hook sets `PDF_RENDER_REDIS_URL` (not the secret).
+2. getproperty-api `docs/deployment.md` §3 "Database roles": `gp_mqtt` is dropped by collective-infra's post-migrate
+   hook after 0037; the init script keeps creating it for 0010 on fresh boxes.
+3. getpack worker (pdf-render consumer, not implemented): `PDF_RENDER_REDIS_URL` with `/15`, prefix `collective`.
+
 ## 2026-10-22 — getproperty gap tasks on `getproperty/r1-platform` (blueprint "Infrastructure & operations")
 
 Rebased onto the founder's `main` (b129586, locked decisions 2026-10-21) and implemented T-2, T-4, T-6, T-7, T-10,

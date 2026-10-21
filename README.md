@@ -168,7 +168,14 @@ Notes
   in → S3 key out, Thai fonts, A4 + 80 mm). The queue contract is in getproperty-api `docs/pdf-render-queue.md`
   (D-236); getpack's worker owns the consumer. Until it is deployed getproperty renders with its own Chromium under
   ADR-0012 / O-015 (worker 1.5 GB: `GETPROPERTY_PDF_RENDERER_MODE=real`, `GETPROPERTY_WORKER_MEMORY=1536M` in
-  `platform/env/<env>.env`); switch both (`queue`, `512M`) when the consumer is live.
+  `platform/env/<env>.env`); switch both (`queue`, `512M`) when the consumer is live. Wiring: Valkey **logical DB 15**
+  is reserved for queues shared between products (`bin/lib.sh` `PLATFORM_QUEUES_VALKEY_DB`; products use 0–14,
+  getproperty 2), BullMQ prefix `collective` (`PDF_RENDER_QUEUE_PREFIX`); producers and getpack's consumer set
+  `PDF_RENDER_REDIS_URL` to their Valkey URL with `/15` (getproperty's hook derives it from `REDIS_URL`). Terraform
+  grants the consumer (`products.getpack.pdf_render_producers = ["getproperty"]`) `s3:GetObject` + `s3:PutObject` on
+  `collective-<env>-getproperty-assets/tmp/pdf-render/*` only, and the producer's `tmp/` expires after 1 day
+  (`tmp_expiration_days = 1`, noncurrent versions too). On one box every product shares the instance role, so the
+  grant is the declared boundary; it becomes an enforced one when getpack's worker runs under its own role.
 - **Upload virus scan**: the platform's shared ClamAV, `CLAMAV_HOST=platform-clamav-1`, `CLAMAV_PORT=3310` (INSTREAM,
   streams ≤ 40 MB).
 
@@ -218,3 +225,13 @@ against the vendors' documentation and must be proven on the first UAT apply / d
 - `restore-drill.sh` end to end (the `--internal` network, the getproperty smoke, `node dist/src/drill-smoke.js`, which
   getproperty-api provides).
 - Compose interpolation of `${GETPROPERTY_WORKER_MEMORY:-1536M}` in `deploy.resources.limits.memory`.
+- The shared `pdf-render` queue on the box: Valkey DB 15 with `--databases 16`, `PDF_RENDER_REDIS_URL` derived by
+  getproperty's `post-secrets.sh`, getpack's consumer (not implemented in getpack yet) reaching getproperty's
+  `tmp/pdf-render/*` with the `PdfRenderProducerObjects` statement, and the `tmp/` rule (1 day, current + noncurrent)
+  on the versioned getproperty bucket alongside the bucket-wide noncurrent rule.
+- `hooks/post-migrate.sh` (getproperty): `DROP ROLE gp_mqtt` after migration 0037 on a live PostgreSQL 18 — no
+  dependency left in `getproperty` (proved only by reading 0010 / 0037).
+- Caddy: `respond` for `/webhooks/integration/*` on the public getproperty hosts while the partners' docker-network
+  calls reach the API; `EMQX_HTTP_ALLOWED_CIDRS=172.30.0.0/16,127.0.0.0/8` matching the address EMQX calls from.
+- `credentials-import` through `compose_product … run migrate node dist/src/credentials-import.js` with the three
+  prefixes passed by `-e` (README §3).
