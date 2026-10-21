@@ -70,13 +70,11 @@ x-api-env: &api-env
   PDF_RENDERER_MODE: ${GETPROPERTY_PDF_RENDERER_MODE:-real}
   PDF_RENDER_QUEUE_PREFIX: collective
   PDF_CHROMIUM_EXECUTABLE: /usr/bin/chromium
-  # Per-merchant / per-tenant provider credentials the app reads from Secrets Manager at run time — under the
-  # product's prefix, which is all the instance role may read (modules/product IAM). Transitional: getproperty O-013
-  # (resolved 2026-10-21 as recommended) moves them into PostgreSQL under the tenant data key; these three lines go
-  # when getproperty-api ships that, leaving only collective/<env>/getproperty/app.
-  PAYMENTS_SECRETS_PREFIX: collective/${COLLECTIVE_ENV}/getproperty/payments
-  LOCKS_SECRETS_PREFIX: collective/${COLLECTIVE_ENV}/getproperty/locks
-  ETAX_SECRETS_PREFIX: collective/${COLLECTIVE_ENV}/getproperty/etax
+  # Per-merchant / per-tenant provider credentials are sealed rows in PostgreSQL (getproperty-api D-240), entered by
+  # the platform admin; the former *_SECRETS_PREFIX lines are gone. ORDER on a box that still holds the sub-path
+  # secrets collective/<env>/getproperty/{payments,locks,etax}/…: first import, passing the prefixes on the command
+  # line (README §3 "Provider credentials"), check its report, then delete the sub-path secrets — never the other way
+  # round. PROVIDER_CREDENTIALS_LEGACY_SECRETS stays unset (false).
   # Upload virus scan (required in production): the platform's shared clamd (platform/docker-compose.yml, T-2)
   CLAMAV_HOST: platform-clamav-1
   CLAMAV_PORT: "3310"

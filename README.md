@@ -67,6 +67,22 @@ After `apply` of an env, do these by hand (one time each):
    EMQX authorises gateways through getproperty-api (HTTP), and `postgres/init/20-getproperty.sh` (run it by hand once
    via SSM on such a box) drops the `getproperty_mqtt` login.
 
+   **Provider credentials** (getproperty-api D-240, RUNBOOK §13): KBank / SCB / Opn merchants, TTLock / Tuya and INET
+   e-Tax accounts live sealed in getproperty's database, not in Secrets Manager; the compose file no longer sets
+   `PAYMENTS_SECRETS_PREFIX` / `LOCKS_SECRETS_PREFIX` / `ETAX_SECRETS_PREFIX`. On a box that still has the former
+   sub-path secrets `collective/<env>/getproperty/{payments,locks,etax}/…`, the order is **import first, then remove**:
+   ```bash
+   # on the box (SSM session), after the first deploy of an api image that ships dist/src/credentials-import.js
+   sudo bash -c 'source /opt/collective/platform/bin/lib.sh && compose_product getproperty run --rm --no-deps \
+     -e PAYMENTS_SECRETS_PREFIX=collective/$COLLECTIVE_ENV/getproperty/payments \
+     -e LOCKS_SECRETS_PREFIX=collective/$COLLECTIVE_ENV/getproperty/locks \
+     -e ETAX_SECRETS_PREFIX=collective/$COLLECTIVE_ENV/getproperty/etax \
+     migrate node dist/src/credentials-import.js'   # report: imported / already in the database / not found
+   ```
+   then check the credentials in the admin console and delete the sub-path secrets (`aws secretsmanager
+   delete-secret`; Terraform does not manage them). Idempotent: re-running it imports nothing twice. A box without
+   sub-path secrets skips this.
+
    **Release artefacts** (getproperty-edge OTA, getproperty-api D-231): products with `release_prefixes` (getproperty:
    `releases/`) keep signed binaries in their assets bucket under that prefix. The instance role can only read there
    (explicit deny on put/delete); attach the `release_publisher_policy_arns` output (`collective-<env>-getproperty-
