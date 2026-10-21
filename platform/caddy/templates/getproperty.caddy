@@ -1,24 +1,94 @@
-# Template → caddy/sites/getproperty.caddy. Hosts from caddy/sites.<env>.yml.
+# Template → caddy/sites/getproperty.caddy (bin/render-sites.sh). Hosts from caddy/sites.<env>.yml.
+# requires-file: sites/getproperty-device-ca.pem
+# getproperty-api docs/deployment.md §4 is the source of these routes. Client IP (D-229): Caddy replaces
+# X-Forwarded-For of untrusted (internet) clients and appends the peer, so every container sees exactly one
+# trusted hop (TRUST_PROXY=1 / TRUSTED_HOPS=1).
 
-{{WEB_HOST}} {
+(getproperty_common) {
 	import security
 	import compress
-	reverse_proxy getproperty-web:3000 {
-		header_up X-Forwarded-Proto {scheme}
-	}
+	# metrics are scraped by Alloy on the docker network, never through the public hosts
+	respond /metrics 404
+	respond /api/metrics 404
 }
 
-{{API_HOST}} {
-	import security
-	import compress
-	request_body {
-		max_size 32MB
-	}
-	# Edge devices (getproperty-edge) post telemetry here; keep timeouts short
-	reverse_proxy getproperty-api:3000 {
+# Owner console, staff PWA, platform admin: one Next.js app, zones by host (getproperty-web)
+{{OWNER_HOST}}, {{STAFF_HOST}}, {{ADMIN_HOST}} {
+	import getproperty_common
+	reverse_proxy getproperty-web:3000 {
 		header_up X-Forwarded-Proto {scheme}
+		header_up -X-Client-Cert-Sha256
 		transport http {
 			read_timeout 60s
 		}
+	}
+}
+
+# Resident LINE Mini App (getproperty-liff)
+{{LIFF_HOST}} {
+	import getproperty_common
+	reverse_proxy getproperty-liff:3000 {
+		header_up X-Forwarded-Proto {scheme}
+		header_up -X-Client-Cert-Sha256
+	}
+}
+
+# Public API: browsers' presigned-upload flows, LINE / payment webhooks, the BFFs' fallback. Never the device mTLS
+# header: only DEVICE_HOST may set it.
+{{API_HOST}} {
+	import getproperty_common
+	request_body {
+		max_size 32MB # files go to S3 by presigned URL; this is the ceiling for everything else
+	}
+	reverse_proxy getproperty-api:3000 {
+		header_up X-Forwarded-Proto {scheme}
+		header_up -X-Client-Cert-Sha256
+		transport http {
+			read_timeout 120s # PDF endpoints
+		}
+	}
+}
+
+# Gateways (getproperty-edge) over HTTPS: bootstrap (one-time code, no certificate yet), certificate renewal and the
+# device endpoints with their X.509 client certificate. Caddy verifies a presented certificate against the
+# getproperty device CA (rendered by products/getproperty/hooks/post-secrets.sh) and forwards only its SHA-256;
+# the API (DEVICE_MTLS_SOURCE=sha256_header) refuses /v1/device/* calls that need mTLS without it.
+{{DEVICE_HOST}} {
+	tls {
+		client_auth {
+			mode verify_if_given
+			trust_pool file /etc/caddy/sites/getproperty-device-ca.pem
+		}
+	}
+	import security
+	respond /metrics 404
+	@device path /v1/device/* /health
+	handle @device {
+		request_body {
+			max_size 8MB
+		}
+		reverse_proxy getproperty-api:3000 {
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Client-Cert-Sha256 {http.request.tls.client.fingerprint}
+			transport http {
+				read_timeout 60s
+			}
+		}
+	}
+	handle {
+		respond 404
+	}
+}
+
+# MQTT itself is EMQX's mTLS listener on :8883 (server certificate from the getproperty device CA, not this
+# host's Let's Encrypt one — gateways trust only the CA they got at bootstrap). This site only answers the
+# platform health check and documents the host.
+{{MQTT_HOST}} {
+	import security
+	handle /health {
+		respond "getproperty mqtt: mqtts://{{MQTT_HOST}}:8883 (mTLS)" 200
+	}
+	handle {
+		respond 404
 	}
 }

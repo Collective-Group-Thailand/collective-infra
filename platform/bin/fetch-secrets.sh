@@ -18,6 +18,8 @@ fetch_platform() {
     echo "POSTGRES_SUPERUSER_PASSWORD=$(jq -r .superuser_password <<<"$pg")"
     echo "GETPACK_DB_PASSWORD=$(jq -r .getpack_password <<<"$pg")"
     echo "GETPROPERTY_DB_PASSWORD=$(jq -r .getproperty_password <<<"$pg")"
+    # getproperty's EMQX authorization login (role gp_mqtt; postgres/init/20-getproperty.sh). Optional key.
+    echo "GETPROPERTY_MQTT_DB_PASSWORD=$(jq -r '.getproperty_mqtt_password // ""' <<<"$pg")"
     echo "GETPOP_DB_PASSWORD=$(jq -r .getpop_password <<<"$pg")"
     echo "VALKEY_PASSWORD=$(jq -r .password <<<"$valkey")"
     echo "EMQX_DASHBOARD_PASSWORD=$(jq -r .dashboard_password <<<"$emqx")"
@@ -47,6 +49,25 @@ fetch_product() {
   json_to_env "$json" >> "$out"
   mv "$out" "$RUN_DIR/$product.env"
   log "$product secrets rendered ($(wc -l < "$RUN_DIR/$product.env") keys)"
+
+  # Per-component env files a product compose file asks for (`env_file: /run/collective/<product>-<component>.env`,
+  # e.g. getproperty-web) come from collective/<env>/<product>/<component>, so a front end never receives the API's
+  # secrets. A missing / placeholder secret renders an empty file (compose needs the file to exist).
+  local compose="$PLATFORM_DIR/products/$product/docker-compose.yml" comp cjson
+  for comp in $(grep -oE "/run/collective/${product}-[a-z0-9-]+\.env" "$compose" 2>/dev/null | sed -E "s#.*/${product}-(.*)\.env#\1#" | sort -u); do
+    out="$RUN_DIR/$product-$comp.env.tmp"; : > "$out"; chmod 0600 "$out"
+    cjson=$(secret_json "$product/$comp")
+    if [ -n "$cjson" ] && ! jq -e '._placeholder' <<<"$cjson" >/dev/null; then
+      json_to_env "$cjson" >> "$out"
+    else
+      log "WARN: secret ${SECRETS_PREFIX}/${product}/${comp} is empty — $product-$comp.env rendered empty"
+    fi
+    mv "$out" "$RUN_DIR/$product-$comp.env"
+  done
+
+  # Product hook (optional): products/<product>/hooks/post-secrets.sh — e.g. getproperty's MQTT TLS files.
+  local hook="$PLATFORM_DIR/products/$product/hooks/post-secrets.sh"
+  if [ -x "$hook" ]; then "$hook" || log "WARN: $product post-secrets hook failed"; fi
 }
 
 case "${1:-all}" in

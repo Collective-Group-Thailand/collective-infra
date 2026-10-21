@@ -25,6 +25,11 @@ for product, vars_ in sites.items():
     if not tmpl.exists():
         print(f"skip {product}: no template"); continue
     text = tmpl.read_text()
+    # A template may need a file a product hook renders first (e.g. a client-CA bundle):
+    #   # requires-file: sites/<name>   (relative to caddy/). Skipped — not broken — until it exists.
+    needs = [n for n in re.findall(r"^# requires-file: (\S+)$", text, re.M) if not (caddy_dir / n).exists()]
+    if needs:
+        print(f"skip {product}: waiting for {needs}"); (out_dir / f"{product}.caddy").unlink(missing_ok=True); continue
     missing = set(re.findall(r"{{(\w+)}}", text)) - set(vars_)
     if missing:
         sys.exit(f"{product}: missing {sorted(missing)} in {yml}")

@@ -2,8 +2,13 @@
 getpack:
   WEB_HOST: uat.getpack.co
   API_HOST: uat-api.getpack.co
-getproperty:
-  WEB_HOST: uat.getproperty.example # TODO
+getproperty: # TODO domain (D-001: getproperty.co) — owner console, staff PWA, admin, LIFF, API, gateways, MQTT
+  OWNER_HOST: uat-app.getproperty.example
+  STAFF_HOST: uat-staff.getproperty.example
+  ADMIN_HOST: uat-admin.getproperty.example
+  LIFF_HOST: uat-liff.getproperty.example
   API_HOST: uat-api.getproperty.example
+  DEVICE_HOST: uat-device.getproperty.example
+  MQTT_HOST: uat-mqtt.getproperty.example
 getpop:
   API_HOST: uat-api.getpop.example # TODO (web is Flutter → S3/CloudFront, no container)

@@ -1,47 +1,112 @@
-# getproperty on the shared box. Deployed with: bin/deploy-product.sh getproperty <tag>
-# Env files (merged by compose_product in bin/lib.sh): /etc/collective/platform.env + /var/lib/collective/getproperty.env (IMAGE_TAG)
-# App secrets: /run/collective/getproperty.env (rendered from Secrets Manager collective/<env>/getproperty/app)
+# getproperty on the shared box. Deployed with: bin/deploy-product.sh getproperty <tag> [--component web|liff]
+# Env files (merged by compose_product in bin/lib.sh): /etc/collective/platform.env + /var/lib/collective/getproperty.env
+# (IMAGE_TAG = getproperty-api's tag; WEB_IMAGE_TAG / LIFF_IMAGE_TAG = the tags of the two front-end repos, which
+# deploy with --component — until their first deploy they run the env's moving tag :uat / :prod).
+# App secrets: /run/collective/getproperty.env (rendered from Secrets Manager collective/<env>/getproperty/app;
+# the keys are listed in getproperty-api docs/deployment.md §3 — the app does not call Secrets Manager itself).
 #
-# Memory budget: web 512M · api 512M · worker 768M (billing PDFs rendered via getpack pdf-render queue when available)
+# Images (getproperty-api docs/deployment.md §2): one api image, four commands — main (:3000 /health /metrics),
+# worker (:3001), ingest (:3002), migrate (one-shot: asset-core core schema → prisma/migrations → optional
+# TimescaleDB step). The image's entrypoint runs the given command, so `command:` below is authoritative.
+#
+# Memory budget (limits): web 384M · liff 256M · api 640M · worker 1G (Chromium, invoices/contracts PDFs) ·
+# ingest 256M · migrate 512M transient = 2.5 GB. With getpack (3.2 GB) and the platform services without
+# PostgreSQL (1.7 GB) that leaves ~8.6 GB for PostgreSQL + page cache on prod (t4g.xlarge, 16 GB). On uat
+# (t4g.large, 8 GB) the limits over-commit: they are ceilings, not reservations — set POSTGRES_MEMORY_LIMIT=2g in
+# uat's platform.env and watch container_memory_working_set_bytes in Grafana (docs/deployment.md §6).
 name: getproperty
 
 networks:
   collective:
     external: true
 
+# Settings every api-image container shares. NOTE: a service's own `environment:` replaces this map (YAML merge is
+# shallow), so every service repeats the anchor below with `<<: *api-env` instead of redefining it.
+x-api-env: &api-env
+  NODE_ENV: production
+  TZ: Asia/Bangkok
+  APP_ENV: ${COLLECTIVE_ENV}
+  INTEGRATIONS_MODE: real
+  DATA_STORES_MODE: real
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
+  OTEL_SERVICE_NAMESPACE: getproperty
+  AWS_REGION: ${AWS_REGION}
+  S3_BUCKET: collective-${COLLECTIVE_ENV}-getproperty-assets
+  S3_FORCE_PATH_STYLE: "false"
+  # The box renders collective/<env>/getproperty/app into the env file; the app must not read it again.
+  AWS_SECRETS_ID: ""
+  # EMQX inside the docker network (plain MQTT on the internal listener; devices use the mTLS listener)
+  MQTT_URL: mqtt://platform-emqx-1:1883
+  MQTT_PROTOCOL_VERSION: "5"
+  MQTT_SHARED_SUBSCRIPTION: "true"
+  # Client IP (D-229): Caddy is the one proxy that appends X-Forwarded-For (it replaces the header of untrusted
+  # clients); the BFFs reach the API over the `collective` network (daemon.json pool 172.30.0.0/16).
+  TRUST_PROXY: "1"
+  TRUSTED_PROXY_CIDRS: 172.30.0.0/16
+  METRICS_ALLOWED_CIDRS: 172.30.0.0/16,127.0.0.0/8
+  # Gateways' mTLS on /v1/device/*: Caddy verifies the certificate on DEVICE_HOST and forwards its SHA-256.
+  DEVICE_MTLS_SOURCE: sha256_header
+  DEVICE_MTLS_HEADER: x-client-cert-sha256
+  PDF_RENDERER_MODE: real
+  PDF_CHROMIUM_EXECUTABLE: /usr/bin/chromium
+
 x-api-base: &api-base
   image: ${ECR_REGISTRY}/getproperty/api:${IMAGE_TAG}
   env_file: /run/collective/getproperty.env
-  environment:
-    NODE_ENV: production
-    PORT: "3000"
-    TZ: Asia/Bangkok
-    OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
-    OTEL_SERVICE_NAMESPACE: getproperty
-    AWS_REGION: ${AWS_REGION}
-    S3_BUCKET: collective-${COLLECTIVE_ENV}-getproperty-assets
-    MQTT_URL: mqtt://platform-emqx-1:1883
   networks: [collective]
   restart: unless-stopped
-  init: false # image already uses tini
+  init: false # the image already uses tini
 
 services:
+  # Owner console, staff PWA, platform admin (one Next.js app, host-based zones)
   web:
-    image: ${ECR_REGISTRY}/getproperty/web:${IMAGE_TAG}
+    image: ${ECR_REGISTRY}/getproperty/web:${WEB_IMAGE_TAG:-${COLLECTIVE_ENV}}
     container_name: getproperty-web
-    env_file: /run/collective/getproperty.env
+    env_file: /run/collective/getproperty-web.env
     environment:
       NODE_ENV: production
       PORT: "3000"
       HOSTNAME: 0.0.0.0
+      TZ: Asia/Bangkok
       API_INTERNAL_URL: http://getproperty-api:3000 # server-side BFF → API over the docker network
+      TRUSTED_HOPS: "1" # Caddy appends one X-Forwarded-For entry (it drops the header of untrusted clients)
       OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
       OTEL_SERVICE_NAME: getproperty-web
     networks: [collective]
     restart: unless-stopped
     deploy:
       resources:
-        limits: { memory: 512M }
+        limits: { memory: 384M }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    labels:
+      collective.metrics: "true"
+      collective.metrics.port: "3000"
+      collective.metrics.path: "/api/metrics"
+
+  # Resident LINE Mini App (LIFF) + technicians / landlords — getproperty-liff
+  liff:
+    image: ${ECR_REGISTRY}/getproperty/liff:${LIFF_IMAGE_TAG:-${COLLECTIVE_ENV}}
+    container_name: getproperty-liff
+    env_file: /run/collective/getproperty-liff.env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      TZ: Asia/Bangkok
+      API_INTERNAL_URL: http://getproperty-api:3000
+      TRUSTED_HOPS: "1"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
+      OTEL_SERVICE_NAME: getproperty-liff
+    networks: [collective]
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: { memory: 256M }
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/healthz >/dev/null || exit 1"]
       interval: 30s
@@ -56,17 +121,14 @@ services:
   api:
     <<: *api-base
     container_name: getproperty-api
+    command: ["node", "dist/src/main.js"]
     environment:
-      NODE_ENV: production
+      <<: *api-env
       PORT: "3000"
-      TZ: Asia/Bangkok
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
       OTEL_SERVICE_NAME: getproperty-api
-      AWS_REGION: ${AWS_REGION}
-      S3_BUCKET: collective-${COLLECTIVE_ENV}-getproperty-assets
     deploy:
       resources:
-        limits: { memory: 512M }
+        limits: { memory: 640M }
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 30s
@@ -78,22 +140,19 @@ services:
       collective.metrics.port: "3000"
       collective.metrics.path: "/metrics"
 
-  # BullMQ consumers: meter ingest rollups (EMQX → API → TimescaleDB), billing runs, notifications
+  # BullMQ: outbox relay + subscribers, billing cycles, notifications, documents (Chromium PDFs), workflow timers
   worker:
     <<: *api-base
     container_name: getproperty-worker
     command: ["node", "dist/src/worker.js"]
     environment:
-      NODE_ENV: production
-      TZ: Asia/Bangkok
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
+      <<: *api-env
+      WORKER_HEALTH_PORT: "3001"
       OTEL_SERVICE_NAME: getproperty-worker
-      AWS_REGION: ${AWS_REGION}
-      S3_BUCKET: collective-${COLLECTIVE_ENV}-getproperty-assets
-      WORKER_CONCURRENCY: "4"
+    shm_size: 256m # Chromium
     deploy:
       resources:
-        limits: { memory: 768M }
+        limits: { memory: 1G }
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 30s
@@ -105,12 +164,43 @@ services:
       collective.metrics.port: "3001"
       collective.metrics.path: "/metrics"
 
-  # One-shot: `prisma migrate deploy`. Not started by `up` (profile), only by deploy-product.sh.
+  # MQTT shared subscription on EMQX → telemetry, health, readings (smart meters). Exactly one replica on the box.
+  ingest:
+    <<: *api-base
+    container_name: getproperty-ingest
+    command: ["node", "dist/src/ingest.js"]
+    environment:
+      <<: *api-env
+      INGEST_HEALTH_PORT: "3002"
+      OTEL_SERVICE_NAME: getproperty-ingest
+      MQTT_CLIENT_ID_PREFIX: getproperty-ingest
+    deploy:
+      resources:
+        limits: { memory: 256M }
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    labels:
+      collective.metrics: "true"
+      collective.metrics.port: "3002"
+      collective.metrics.path: "/metrics"
+
+  # One-shot, run by deploy-product.sh before `up` (profile, never started by `up`). Not `npx prisma migrate deploy`:
+  # getproperty's `core` schema comes from @collective/asset-core and must migrate first; the image's runner applies
+  # it, then prisma/migrations (recorded in _prisma_migrations exactly like Prisma), then the optional TimescaleDB
+  # step (D-162) — no Prisma CLI in the image.
   migrate:
     <<: *api-base
-    command: ["sh", "-c", "corepack enable >/dev/null 2>&1 || true; npx prisma migrate deploy"]
+    command: ["node", "dist/src/migrate.js"]
+    environment:
+      <<: *api-env
+      TIMESCALEDB_MIGRATION: auto
+      OTEL_SERVICE_NAME: getproperty-migrate
     restart: "no"
     profiles: ["tools"]
     deploy:
       resources:
-        limits: { memory: 768M }
+        limits: { memory: 512M }

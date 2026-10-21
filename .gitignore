@@ -14,6 +14,7 @@ plan.tail
 # Platform (rendered on the box, never committed)
 platform/caddy/sites/*.caddy
 platform/caddy/sites/_platform_users
+platform/caddy/sites/*.pem
 
 # OS
 .DS_Store
