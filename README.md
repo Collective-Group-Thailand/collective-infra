@@ -65,6 +65,12 @@ After `apply` of an env, do these by hand (one time each):
    its app secret (the API's user on EMQX's internal listener). The full key list of `getproperty/app` is in
    getproperty-api `docs/deployment.md` §3.
 
+   **Release artefacts** (getproperty-edge OTA, getproperty-api D-231): products with `release_prefixes` (getproperty:
+   `releases/`) keep signed binaries in their assets bucket under that prefix. The instance role can only read there
+   (explicit deny on put/delete); attach the `release_publisher_policy_arns` output (`collective-<env>-getproperty-
+   release-publisher`) to the release engineer's identity, never to the instance role or a deploy role. Gateways
+   download through the API on the device host (Caddy route `/v1/device/ota/artifacts/*`), never from S3 directly.
+
    ```bash
    aws secretsmanager put-secret-value --secret-id collective/uat/platform/valkey --secret-string '{"password":"'"$(openssl rand -hex 24)"'"}'
    ```

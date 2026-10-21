@@ -62,6 +62,22 @@
 	}
 	import security
 	respond /metrics 404
+	# OTA artefacts (getproperty-api D-231, deployment.md §5a): streamed by the API from the private bucket
+	# (releases/edge/…) to the authenticated gateway; GET/HEAD only and a long upstream read timeout because the
+	# download is paced by the building's uplink. Must stay before @device (handle blocks run in written order).
+	@ota_artifact {
+		path /v1/device/ota/artifacts/*
+		method GET HEAD
+	}
+	handle @ota_artifact {
+		reverse_proxy getproperty-api:3000 {
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Client-Cert-Sha256 {http.request.tls.client.fingerprint}
+			transport http {
+				read_timeout 10m
+			}
+		}
+	}
 	@device path /v1/device/* /health
 	handle @device {
 		request_body {

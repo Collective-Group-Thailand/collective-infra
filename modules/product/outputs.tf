@@ -22,6 +22,11 @@ output "policy_arn" {
   value = aws_iam_policy.product.arn
 }
 
+output "release_publisher_policy_arn" {
+  description = "Attach to the release engineer's identity (null when the product has no release_prefixes)"
+  value       = length(aws_iam_policy.release_publisher) > 0 ? aws_iam_policy.release_publisher[0].arn : null
+}
+
 output "ses_dns_records" {
   description = "DNS records to create at the registrar when route53_zone_id is not set"
   value = var.ses_domain == null ? [] : concat(

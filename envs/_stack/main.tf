@@ -100,17 +100,18 @@ resource "aws_secretsmanager_secret" "platform" {
 
 # --- Products --------------------------------------------------------------------------------------
 module "product" {
-  for_each        = var.products
-  source          = "../../modules/product"
-  name_prefix     = var.name_prefix
-  environment     = var.environment
-  region          = var.region
-  product         = each.key
-  cors_origins    = each.value.cors_origins
-  ses_domain      = each.value.ses_domain
-  route53_zone_id = each.value.route53_zone_id
-  enable_sqs      = each.value.enable_sqs
-  extra_secrets   = each.value.extra_secrets
+  for_each         = var.products
+  source           = "../../modules/product"
+  name_prefix      = var.name_prefix
+  environment      = var.environment
+  region           = var.region
+  product          = each.key
+  cors_origins     = each.value.cors_origins
+  ses_domain       = each.value.ses_domain
+  route53_zone_id  = each.value.route53_zone_id
+  enable_sqs       = each.value.enable_sqs
+  extra_secrets    = each.value.extra_secrets
+  release_prefixes = each.value.release_prefixes
 }
 
 # --- App server ------------------------------------------------------------------------------------

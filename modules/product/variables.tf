@@ -63,3 +63,13 @@ variable "extra_secrets" {
     error_message = "extra_secrets are short lowercase slugs (not \"app\")"
   }
 }
+
+variable "release_prefixes" {
+  description = "Bucket prefixes holding signed release artefacts (e.g. getproperty \"releases/\"): the instance role may only read them; writes need the separate release-publisher policy"
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for p in var.release_prefixes : can(regex("^[a-z0-9][a-z0-9-]*/$", p)) && p != "tmp/"])
+    error_message = "release_prefixes are top-level prefixes ending in / (not tmp/)"
+  }
+}

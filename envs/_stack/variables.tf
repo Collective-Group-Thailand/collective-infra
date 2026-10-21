@@ -73,11 +73,12 @@ variable "ecr_repositories" {
 variable "products" {
   description = "Products hosted in this environment"
   type = map(object({
-    cors_origins    = optional(list(string), [])
-    ses_domain      = optional(string)
-    route53_zone_id = optional(string)
-    enable_sqs      = optional(bool, false)
-    extra_secrets   = optional(list(string), [])
+    cors_origins     = optional(list(string), [])
+    ses_domain       = optional(string)
+    route53_zone_id  = optional(string)
+    enable_sqs       = optional(bool, false)
+    extra_secrets    = optional(list(string), [])
+    release_prefixes = optional(list(string), [])
   }))
 }
 

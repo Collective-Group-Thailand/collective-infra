@@ -189,6 +189,17 @@ data "aws_iam_policy_document" "product" {
     actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"]
     resources = ["${aws_s3_bucket.assets.arn}/*"]
   }
+  # Release artefacts (getproperty OTA, getproperty-api D-231) are served by the app but written only by a release
+  # engineer: an explicit deny wins over AssetsObjects, so a compromised container cannot replace a binary.
+  dynamic "statement" {
+    for_each = length(var.release_prefixes) > 0 ? [1] : []
+    content {
+      sid       = "ReleasesReadOnly"
+      effect    = "Deny"
+      actions   = ["s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion", "s3:AbortMultipartUpload", "s3:PutObjectTagging", "s3:PutObjectAcl"]
+      resources = [for p in var.release_prefixes : "${aws_s3_bucket.assets.arn}/${p}*"]
+    }
+  }
   statement {
     sid       = "Secrets"
     actions   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
@@ -223,5 +234,34 @@ resource "aws_iam_policy" "product" {
   name        = "${local.name}-access"
   description = "Instance-role access for ${var.product} (${var.environment}): S3 assets, secrets, SES"
   policy      = data.aws_iam_policy_document.product.json
+  tags        = local.tags
+}
+
+# --- Release publisher: upload signed artefacts under release_prefixes (attach to the release engineer's identity,
+# never to the instance role or a CI role that also deploys) ----------------------------------------------------------
+data "aws_iam_policy_document" "release_publisher" {
+  count = length(var.release_prefixes) > 0 ? 1 : 0
+  statement {
+    sid       = "ReleasesList"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.assets.arn]
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = [for p in var.release_prefixes : "${p}*"]
+    }
+  }
+  statement {
+    sid       = "ReleasesWrite"
+    actions   = ["s3:PutObject", "s3:GetObject", "s3:GetObjectAttributes", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"]
+    resources = [for p in var.release_prefixes : "${aws_s3_bucket.assets.arn}/${p}*"]
+  }
+}
+
+resource "aws_iam_policy" "release_publisher" {
+  count       = length(var.release_prefixes) > 0 ? 1 : 0
+  name        = "${local.name}-release-publisher"
+  description = "Upload signed release artefacts for ${var.product} (${var.environment}) under ${join(", ", var.release_prefixes)}"
+  policy      = data.aws_iam_policy_document.release_publisher[0].json
   tags        = local.tags
 }

@@ -34,6 +34,9 @@ products = {
     ses_domain   = null # enable when the domain is decided (SES_FROM_ADDRESS no-reply@<domain>)
     # front-end env files and the EMQX device-listener TLS (getproperty-api docs/deployment.md §3)
     extra_secrets = ["web", "liff", "mqtt-tls"]
+    # signed OTA artefacts of getproperty-edge (releases/edge/<version>/<file>): read-only for the instance role,
+    # uploaded with the release-publisher policy (getproperty-api docs/deployment.md §5a, D-231)
+    release_prefixes = ["releases/"]
   }
   getpop = {
     cors_origins = ["https://getpop.example"] # TODO domain

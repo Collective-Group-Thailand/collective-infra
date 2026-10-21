@@ -36,3 +36,8 @@ output "ses_dns_records" {
 output "alerts_topic_arn" {
   value = module.app_server.alerts_topic_arn
 }
+
+output "release_publisher_policy_arns" {
+  description = "Per product with release_prefixes: the policy a release engineer needs to upload artefacts"
+  value       = { for k, p in module.product : k => p.release_publisher_policy_arn if p.release_publisher_policy_arn != null }
+}
