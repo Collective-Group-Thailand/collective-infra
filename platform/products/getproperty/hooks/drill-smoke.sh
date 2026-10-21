@@ -15,8 +15,10 @@
 #    the smoke must limit itself to database-level checks under RLS.
 #    It runs on the drill's --internal network (nothing but the restored database is reachable: no Valkey, EMQX, S3,
 #    IMDS or internet) with --memory 512m. Expected checks: an owner login, a billing-cycle preview of one building,
-#    a cross-tenant read returning nothing. Output: one line per check (`SMOKE <check> ok|fail <detail>`); exit 0 =
-#    every check passed. Until the deployed image contains dist/src/drill-smoke.js the step is reported SKIPPED.
+#    a cross-tenant read returning nothing. Output: one line per check (`SMOKE <check> ok|fail|skip <detail>`); exit 0
+#    = no check failed (getproperty-api D-248). The command ships in every api image since getproperty-api 6b02d84
+#    (2026-10-22), which this platform branch requires anyway (PDF queue env, EMQX HTTP auth): an image without it
+#    is too old for this platform and fails the drill instead of being skipped.
 set -euo pipefail
 : "${DRILL_CONTAINER:?}" "${DRILL_NETWORK:?}" "${DRILL_DB_HOST:?}" "${DRILL_DB_PORT:?}"
 source "$(dirname "$0")/../../../bin/lib.sh"
@@ -44,7 +46,7 @@ aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS 
 docker pull --quiet "$image" >/dev/null
 if ! docker run --rm --network none --entrypoint node "$image" \
      -e "process.exit(require('fs').existsSync('dist/src/drill-smoke.js') ? 0 : 3)"; then
-  echo "SKIPPED app smoke: $image has no dist/src/drill-smoke.js yet (getproperty-api T-15)"; exit 0
+  echo "SMOKE app fail $image has no dist/src/drill-smoke.js (getproperty-api older than 6b02d84, T-15) — deploy a current api image"; exit 1
 fi
 
 pw=$(openssl rand -hex 24) # one-off password of the restored login; the drill instance is deleted afterwards
