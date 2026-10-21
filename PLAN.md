@@ -14,7 +14,7 @@
 | UAT | `t4g.large` (2 vCPU / 8 GB), EventBridge Scheduler start 08:00 / stop 20:00 Mon–Fri (Asia/Bangkok), EBS data 60 GB |
 | Database | 1 PostgreSQL 18 instance (`timescale/timescaledb-ha:pg18` — มี TimescaleDB + pgvector + pgBackRest ในตัว), 1 database + 1 role ต่อ product, data บน EBS volume แยก |
 | Queue / cache | 1 Valkey instance, logical DB แยกต่อ product |
-| MQTT | EMQX 5.8 (getproperty IoT edge), TLS 8883 ผ่าน Caddy-issued cert |
+| MQTT | EMQX 5.8 (getproperty IoT edge), TLS 8883 ~~ผ่าน Caddy-issued cert~~ → **mutual TLS** ด้วย getproperty device CA (server cert + client cert verify, CN = username, ACL จาก `smart.mqtt_acl`) — branch `getproperty/r1-platform`, เพราะ gateway trust เฉพาะ CA ที่ได้ตอน bootstrap (device protocol §1) |
 | Ingress | Caddy (auto-TLS) route ตาม hostname → container ของแต่ละ product |
 | Backup | pgBackRest full daily + WAL archive → S3 (35-day retention) + DLM EBS snapshot daily (7 days) + restore drill รายเดือน |
 | Isolation | S3 bucket / Secrets / SES identity / ECR repo แยกต่อ product; compose project แยก (`platform` + 1 ต่อ product) |

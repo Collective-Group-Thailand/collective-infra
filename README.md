@@ -57,6 +57,13 @@ After `apply` of an env, do these by hand (one time each):
    | `collective/<env>/platform/grafana` | `{"prometheus_url":"https://prometheus-….grafana.net/api/prom/push","prometheus_user":"123","loki_url":"https://logs-….grafana.net/loki/api/v1/push","loki_user":"456","tempo_url":"https://tempo-….grafana.net/otlp","tempo_user":"789","api_key":"glc_…"}` |
    | `collective/<env>/platform/caddy` | `{"acme_email":"ops@…","basic_auth_users":["ops:$2a$14$…"]}` (`caddy hash-password`) |
    | `collective/<env>/<product>/app` | flat JSON of the product's env — `DATABASE_URL`, `REDIS_URL`, JWT keys, 3rd-party keys. Hostnames inside the docker network: `postgres`, `valkey`, `platform-emqx-1`, `platform-alloy-1` |
+   | `collective/<env>/getproperty/web`, `…/getproperty/liff` | flat JSON of each front end's own env (session secrets, LIFF id, public URLs) → `/run/collective/getproperty-<web\|liff>.env` — the front ends never get the API's secrets |
+   | `collective/<env>/getproperty/mqtt-tls` | `{"server_pem","server_key","ca_pem"}` — EMQX's 8883 device listener (mutual TLS): server certificate issued from getproperty's device CA (`pnpm device:broker-cert --host <MQTT_HOST>` in getproperty-api) and the CA that verifies gateways. `products/getproperty/hooks/post-secrets.sh` installs it and the Caddy device-host trust pool |
+
+   getproperty also needs `getproperty_mqtt_password` in `collective/<env>/platform/postgres` (EMQX's read-only
+   login for `smart.mqtt_acl`, created by `postgres/init/20-getproperty.sh`) and `MQTT_USERNAME` / `MQTT_PASSWORD` in
+   its app secret (the API's user on EMQX's internal listener). The full key list of `getproperty/app` is in
+   getproperty-api `docs/deployment.md` §3.
 
    ```bash
    aws secretsmanager put-secret-value --secret-id collective/uat/platform/valkey --secret-string '{"password":"'"$(openssl rand -hex 24)"'"}'
@@ -113,9 +120,19 @@ Notes
   runs — either one monorepo workflow, or the web repo deploys with `migrate: false` after api.
 - Alternative to rebuilding on tag: `promote.yml` (manual) re-tags the sha that passed UAT as `:prod`.
 - Tag `v1` of this repo = the reusable-workflow API. Bump deliberately.
+- **Multi-repo products** (getproperty: `getproperty-api`, `getproperty-web`, `getproperty-liff`): the api repo deploys
+  `IMAGE_TAG` (api, worker, ingest, migrate); each front-end repo deploys its own image with `component: web` /
+  `component: liff` on `reusable-deploy.yml` (→ `deploy-product.sh … --component web`, state `WEB_IMAGE_TAG`, no
+  migration, rollback of that image only). Until a front end's first deploy the box runs its moving `:uat` / `:prod`
+  tag. The image must exist in ECR before the first `deploy-product.sh getproperty` (compose pulls every service).
+- A build that needs a sibling source tree (getproperty-api builds `@collective/asset-core` from source until the
+  package is on GitHub Packages) passes `extra_repository` / `extra_ref` / `extra_path` / `build_contexts` and the
+  `extra_repository_token` secret to `reusable-build-push.yml`.
 - Contract the compose templates expect from images: `/health` on `:3000` (api), `/api/healthz` on `:3000` (web),
   worker health on `:3001`, Prometheus `/metrics`, OTLP to `$OTEL_EXPORTER_OTLP_ENDPOINT`.
-  Migration = `npx prisma migrate deploy` inside the api image.
+  Migration = the product compose file's one-shot `migrate` service (getpack: `npx prisma migrate deploy`;
+  getproperty: `node dist/src/migrate.js` — asset-core `core` schema first, then its Prisma migrations, then the
+  optional TimescaleDB step).
 
 ## 5. Day-2 operations
 
