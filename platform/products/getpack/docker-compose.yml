@@ -77,7 +77,11 @@ services:
       collective.metrics.port: "3000"
       collective.metrics.path: "/metrics"
 
-  # BullMQ consumers, outbox relay, PDFs (Chromium) — the only Chromium on the box by design
+  # BullMQ consumers, outbox relay, PDFs (Chromium) — the only Chromium on the box by design. Consumer of the shared
+  # `pdf-render` queue once getpack implements it (getproperty-api docs/pdf-render-queue.md §6): PDF_RENDER_REDIS_URL
+  # in getpack/app = getpack's Valkey host and password with logical DB 15 (bin/lib.sh PLATFORM_QUEUES_VALKEY_DB),
+  # prefix `collective`; S3 Get/Put on collective-<env>-<producer>-assets/tmp/pdf-render/* (Terraform
+  # products.getpack.pdf_render_producers).
   worker:
     <<: *api-base
     container_name: getpack-worker

@@ -15,6 +15,12 @@ LOG_DIR=/var/log/collective
 mkdir -p "$RUN_DIR" "$STATE_DIR" "$LOG_DIR"
 chmod 0700 "$RUN_DIR"
 
+# Valkey logical databases (one Valkey per box, `--databases 16`): each product keeps its own queues and cache in its
+# own DB 0–14 (getproperty 2 — its REDIS_URL; getpack and getpop the DB of their REDIS_URL); DB 15 is reserved for
+# queues shared between products (BullMQ prefix `collective`): `pdf-render` (getproperty-api docs/pdf-render-queue.md
+# — every producer and getpack's consumer use exactly this DB). No product may use 15 for its own keys.
+PLATFORM_QUEUES_VALKEY_DB=15
+
 log() { printf '%s [%s] %s\n' "$(date -Is)" "${0##*/}" "$*" | tee -a "$LOG_DIR/platform.log" >&2; }
 die() { log "ERROR: $*"; exit 1; }
 

@@ -52,8 +52,14 @@ x-api-env: &api-env
   # Gateways' mTLS on /v1/device/*: Caddy verifies the certificate on DEVICE_HOST and forwards its SHA-256.
   DEVICE_MTLS_SOURCE: sha256_header
   DEVICE_MTLS_HEADER: x-client-cert-sha256
-  # PDFs: `real` = the image's own Chromium (interim, O-015); `queue` = the shared pdf-render queue (T-1, D-236)
+  # PDFs (getproperty-api D-236, D-242, ADR-0012, docs/pdf-render-queue.md): GETPROPERTY_PDF_RENDERER_MODE
+  # (platform/env/<env>.env) → the image's PDF_RENDERER_MODE: `real` = its own Chromium in the worker (interim),
+  # `queue` = the shared BullMQ queue `pdf-render` consumed by getpack's worker. Queue mode reads
+  # PDF_RENDER_REDIS_URL from the env file: hooks/post-secrets.sh derives it from REDIS_URL with the platform's
+  # shared-queue logical DB 15 (PLATFORM_QUEUES_VALKEY_DB in bin/lib.sh) — never getproperty's own DB, or getpack's
+  # consumer would not see the jobs. Not set here: `environment:` would override the env file.
   PDF_RENDERER_MODE: ${GETPROPERTY_PDF_RENDERER_MODE:-real}
+  PDF_RENDER_QUEUE_PREFIX: collective
   PDF_CHROMIUM_EXECUTABLE: /usr/bin/chromium
   # Per-merchant / per-tenant provider credentials the app reads from Secrets Manager at run time — under the
   # product's prefix, which is all the instance role may read (modules/product IAM). Transitional: getproperty O-013

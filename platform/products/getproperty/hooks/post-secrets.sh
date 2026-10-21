@@ -10,6 +10,10 @@
 #     /internal/emqx/{authn,authz} (platform secret collective/<env>/platform/emqx, key getproperty_auth_token).
 #  3. The API's MQTT user on EMQX's internal listener (MQTT_USERNAME / MQTT_PASSWORD of the app secret):
 #     bootstrap file for a fresh EMQX + an upsert through EMQX's REST API for a running one.
+#  4. PDF_RENDER_REDIS_URL (getproperty-api PDF_RENDERER_MODE=queue, docs/pdf-render-queue.md): REDIS_URL of the app
+#     secret with the platform's shared-queue logical DB (PLATFORM_QUEUES_VALKEY_DB = 15), so getproperty and getpack's
+#     pdf-render consumer meet in the same DB whatever DB getproperty's own REDIS_URL names. A value in the product
+#     secret wins but is reported when it names another DB. Harmless while the mode is `real` (the API ignores it).
 # UNVERIFIED on a live box (written against the EMQX 5.8 and Caddy 2.10 documentation).
 source "$(dirname "$0")/../../../bin/lib.sh"
 
@@ -41,6 +45,20 @@ if [ -n "$token" ]; then
   chmod 0600 "$ENV_FILE.next"; mv "$ENV_FILE.next" "$ENV_FILE"
 else
   log "WARN: ${SECRETS_PREFIX}/platform/emqx has no getproperty_auth_token — EMQX refuses every gateway"
+fi
+
+# The shared pdf-render queue's Valkey DB (same host and password as REDIS_URL, DB PLATFORM_QUEUES_VALKEY_DB)
+unquote() { sed -e "s/^'//" -e "s/'\$//"; }
+pdf_url=$(grep -s '^PDF_RENDER_REDIS_URL=' "$ENV_FILE" | cut -d= -f2- | unquote || true)
+redis_url=$(grep -s '^REDIS_URL=' "$ENV_FILE" | cut -d= -f2- | unquote || true)
+if [ -n "$pdf_url" ]; then
+  [[ "${pdf_url%%\?*}" =~ /${PLATFORM_QUEUES_VALKEY_DB}$ ]] \
+    || log "WARN: PDF_RENDER_REDIS_URL in getproperty/app is not Valkey DB ${PLATFORM_QUEUES_VALKEY_DB} — getpack's pdf-render consumer will not see the jobs"
+elif [[ "${redis_url%%\?*}" =~ ^(rediss?://[^/]+)(/[0-9]*)?$ ]]; then
+  { cat "$ENV_FILE"; printf "PDF_RENDER_REDIS_URL='%s/%s'\n" "${BASH_REMATCH[1]}" "$PLATFORM_QUEUES_VALKEY_DB"; } > "$ENV_FILE.next"
+  chmod 0600 "$ENV_FILE.next"; mv "$ENV_FILE.next" "$ENV_FILE"
+else
+  log "WARN: REDIS_URL missing or unparsable in getproperty/app — PDF_RENDER_REDIS_URL not set (PDF_RENDERER_MODE=queue would fall back to getproperty's own DB)"
 fi
 
 # The API's broker login (internal listener 1883; never published)

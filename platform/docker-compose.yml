@@ -97,6 +97,8 @@ services:
       - valkey-server
       - --requirepass
       - ${VALKEY_PASSWORD}
+      - --databases
+      - "16" # 0–14 one per product, 15 = shared platform queues (pdf-render) — bin/lib.sh PLATFORM_QUEUES_VALKEY_DB
       - --maxmemory
       - ${VALKEY_MAXMEMORY:-384mb}
       - --maxmemory-policy
