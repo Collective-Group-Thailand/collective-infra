@@ -6,13 +6,19 @@
 # the keys are listed in getproperty-api docs/deployment.md §3 — the app does not call Secrets Manager itself).
 #
 # Images (getproperty-api docs/deployment.md §2): one api image, four commands — main (:3000 /health /metrics),
-# worker (:3001), ingest (:3002), migrate (one-shot: asset-core core schema → prisma/migrations → optional
-# TimescaleDB step). The image's entrypoint runs the given command, so `command:` below is authoritative.
+# worker (:3001), ingest (:3001 in its own container, INGEST_HEALTH_PORT — image contract, T-10), migrate (one-shot:
+# asset-core core schema → prisma/migrations → TimescaleDB step → reference seed). The image's entrypoint runs the
+# given command, so `command:` below is authoritative.
 #
-# Memory budget (limits): web 384M · liff 256M · api 640M · worker 1G (Chromium, invoices/contracts PDFs) ·
-# ingest 256M · migrate 512M transient = 2.5 GB. The upload scan uses the platform's shared ClamAV (counted in the
-# platform's ≈ 6 GB). On uat (t4g.large, 8 GB) the limits over-commit: they are ceilings, not reservations — watch
-# container_memory_working_set_bytes in Grafana (getproperty-api docs/deployment.md §6).
+# Memory budget (locked 2026-10-21: getproperty ≈ 1.8 GB on the 16 GB prod box; getproperty-api D-233, T-11):
+#   api 512M · worker 512M · ingest 192M · web 384M · liff 192M = 1,792 MB   (migrate 512M one-shot, not steady state)
+# Interim (getproperty O-015, resolved 2026-10-21 as recommended; getproperty-api D-236 + ADR-0012): until getpack's
+# shared `pdf-render` consumer is deployed, getproperty renders its PDFs with its own Chromium in the worker, which
+# then gets 1.5 GB — GETPROPERTY_WORKER_MEMORY (default 1536M below) → getproperty = 2,816 MB. When the queue is live:
+# set GETPROPERTY_PDF_RENDERER_MODE=queue and GETPROPERTY_WORKER_MEMORY=512M in platform/env/<env>.env, then make 512M
+# the default here and drop shm_size. ClamAV is the platform's shared service (T-2, counted in the platform's ≈ 6 GB).
+# uat (t4g.large, 8 GB) runs the same limits (UAT proves them under load); every project's ceilings together exceed
+# 8 GB there, accepted because limits are ceilings, not reservations (platform/env/uat.env sizes PostgreSQL down).
 name: getproperty
 
 networks:
@@ -46,10 +52,13 @@ x-api-env: &api-env
   # Gateways' mTLS on /v1/device/*: Caddy verifies the certificate on DEVICE_HOST and forwards its SHA-256.
   DEVICE_MTLS_SOURCE: sha256_header
   DEVICE_MTLS_HEADER: x-client-cert-sha256
-  PDF_RENDERER_MODE: real
+  # PDFs: `real` = the image's own Chromium (interim, O-015); `queue` = the shared pdf-render queue (T-1, D-236)
+  PDF_RENDERER_MODE: ${GETPROPERTY_PDF_RENDERER_MODE:-real}
   PDF_CHROMIUM_EXECUTABLE: /usr/bin/chromium
   # Per-merchant / per-tenant provider credentials the app reads from Secrets Manager at run time — under the
-  # product's prefix, which is all the instance role may read (modules/product IAM).
+  # product's prefix, which is all the instance role may read (modules/product IAM). Transitional: getproperty O-013
+  # (resolved 2026-10-21 as recommended) moves them into PostgreSQL under the tenant data key; these three lines go
+  # when getproperty-api ships that, leaving only collective/<env>/getproperty/app.
   PAYMENTS_SECRETS_PREFIX: collective/${COLLECTIVE_ENV}/getproperty/payments
   LOCKS_SECRETS_PREFIX: collective/${COLLECTIVE_ENV}/getproperty/locks
   ETAX_SECRETS_PREFIX: collective/${COLLECTIVE_ENV}/getproperty/etax
@@ -113,7 +122,7 @@ services:
     restart: unless-stopped
     deploy:
       resources:
-        limits: { memory: 256M }
+        limits: { memory: 192M }
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/healthz >/dev/null || exit 1"]
       interval: 30s
@@ -135,7 +144,7 @@ services:
       OTEL_SERVICE_NAME: getproperty-api
     deploy:
       resources:
-        limits: { memory: 640M }
+        limits: { memory: 512M }
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 30s
@@ -147,7 +156,8 @@ services:
       collective.metrics.port: "3000"
       collective.metrics.path: "/metrics"
 
-  # BullMQ: outbox relay + subscribers, billing cycles, notifications, documents (Chromium PDFs), workflow timers
+  # BullMQ: outbox relay + subscribers, billing cycles, notifications, documents (PDFs: own Chromium until
+  # pdf-render), workflow timers
   worker:
     <<: *api-base
     container_name: getproperty-worker
@@ -156,10 +166,11 @@ services:
       <<: *api-env
       WORKER_HEALTH_PORT: "3001"
       OTEL_SERVICE_NAME: getproperty-worker
-    shm_size: 256m # Chromium
+    shm_size: 256m # Chromium (interim, O-015)
     deploy:
       resources:
-        limits: { memory: 1G }
+        # O-015 interim (own Chromium, ADR-0012 in getproperty-api): 1.5 GB; 512M once PDF_RENDERER_MODE=queue
+        limits: { memory: "${GETPROPERTY_WORKER_MEMORY:-1536M}" }
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 30s
@@ -178,21 +189,21 @@ services:
     command: ["node", "dist/src/ingest.js"]
     environment:
       <<: *api-env
-      INGEST_HEALTH_PORT: "3002"
+      INGEST_HEALTH_PORT: "3001" # image contract: worker-type health on :3001 (own container, T-10)
       OTEL_SERVICE_NAME: getproperty-ingest
       MQTT_CLIENT_ID_PREFIX: getproperty-ingest
     deploy:
       resources:
-        limits: { memory: 256M }
+        limits: { memory: 192M }
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 40s
     labels:
       collective.metrics: "true"
-      collective.metrics.port: "3002"
+      collective.metrics.port: "3001"
       collective.metrics.path: "/metrics"
 
   # One-shot, run by deploy-product.sh before `up` (profile, never started by `up`). Not `npx prisma migrate deploy`:
