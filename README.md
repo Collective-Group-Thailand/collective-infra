@@ -57,7 +57,7 @@ After `apply` of an env, do these by hand (one time each):
    | `collective/<env>/platform/grafana` | `{"prometheus_url":"https://prometheus-….grafana.net/api/prom/push","prometheus_user":"123","loki_url":"https://logs-….grafana.net/loki/api/v1/push","loki_user":"456","tempo_url":"https://tempo-….grafana.net/otlp","tempo_user":"789","api_key":"glc_…"}` |
    | `collective/<env>/platform/caddy` | `{"acme_email":"ops@…","basic_auth_users":["ops:$2a$14$…"]}` (`caddy hash-password`) |
    | `collective/<env>/<product>/app` | flat JSON of the product's env — `DATABASE_URL`, `REDIS_URL`, JWT keys, 3rd-party keys. Hostnames inside the docker network: `postgres`, `valkey`, `platform-emqx-1`, `platform-alloy-1` |
-   | `collective/<env>/getproperty/web`, `…/getproperty/liff` | flat JSON of each front end's own env (session secrets, LIFF id, public URLs) → `/run/collective/getproperty-<web\|liff>.env` — the front ends never get the API's secrets |
+   | `collective/<env>/getproperty/web`, `…/getproperty/liff` | flat JSON of each front end's own env (session secrets, hosts, public URLs; for liff `NEXT_PUBLIC_LIFF_ID` — that environment's LINE channel —, `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `NEXT_PUBLIC_SENTRY_DSN`, `NEXT_PUBLIC_ENV_BADGE`, `NEXT_PUBLIC_ASSET_BASE_URL`) → `/run/collective/getproperty-<web\|liff>.env` — the front ends never get the API's secrets. Both read every value at run time, `NEXT_PUBLIC_*` included (one image per front end for every environment, so `promote.yml` can ship the UAT image) |
    | `collective/<env>/getproperty/mqtt-tls` | `{"server_pem","server_key","ca_pem"}` — EMQX's 8883 device listener (mutual TLS): server certificate issued from getproperty's device CA (`pnpm device:broker-cert --host <MQTT_HOST>` in getproperty-api) and the CA that verifies gateways. `products/getproperty/hooks/post-secrets.sh` installs it and the Caddy device-host trust pool |
 
    getproperty also needs `getproperty_mqtt_password` in `collective/<env>/platform/postgres` (EMQX's read-only
@@ -124,7 +124,10 @@ jobs:
 Notes
 - A product with two images (api + web) must push **both** with the same `image_tag` before `reusable-deploy`
   runs — either one monorepo workflow, or the web repo deploys with `migrate: false` after api.
-- Alternative to rebuilding on tag: `promote.yml` (manual) re-tags the sha that passed UAT as `:prod`.
+- Alternative to rebuilding on tag: `promote.yml` (manual) re-tags the sha that passed UAT as `:prod`. For getproperty
+  pick `component` `api` / `web` / `liff` (or `all`: api with its migration, then web, then liff, each from its own
+  `:uat`); a front end is promoted as its own component (`--component`, `<NAME>_IMAGE_TAG`), so the box runs exactly
+  the sha UAT ran. Valid because getproperty-web and getproperty-liff compile no environment value into their images.
 - Tag `v1` of this repo = the reusable-workflow API. Bump deliberately.
 - **Multi-repo products** (getproperty: `getproperty-api`, `getproperty-web`, `getproperty-liff`): the api repo deploys
   `IMAGE_TAG` (api, worker, ingest, migrate); each front-end repo deploys its own image with `component: web` /

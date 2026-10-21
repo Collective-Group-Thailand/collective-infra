@@ -3,6 +3,14 @@ name: Promote image uat → prod
 # Re-tag the image(s) currently deployed to UAT (or an explicit sha tag) as :prod and deploy to
 # production. No rebuild: the bytes that passed UAT are the bytes that ship. Approval gate = the
 # `production` GitHub Environment.
+#
+# Multi-repo products (getproperty: getproperty-api, getproperty-web, getproperty-liff) promote per component, the
+# way they deploy (deploy-product.sh --component): `api` = the api image (api, worker, ingest, migrate → IMAGE_TAG,
+# with the migration), `web` / `liff` = that front end alone (WEB_IMAGE_TAG / LIFF_IMAGE_TAG, no migration, rollback
+# of that image only), `all` = api first, then web, then liff, each from its own :uat tag (the three repos have
+# different sha tags, so an explicit image_tag needs a single component). Both front ends read every environment value
+# at run time (getproperty-web ADR-0009, getproperty-liff ADR-0007): the UAT image runs production's LIFF id, hosts
+# and keys from collective/production/getproperty/<web|liff>.
 
 on:
   workflow_dispatch:
@@ -11,11 +19,17 @@ on:
         type: choice
         options: [getpack, getproperty, getpop]
         required: true
+      component:
+        description: "getproperty only: all | api | web | liff (the others always promote every image)"
+        type: choice
+        options: [all, api, web, liff]
+        default: all
       image_tag:
-        description: "sha-xxxxxxx to promote (leave empty = whatever :uat points at)"
+        description: "sha-xxxxxxx to promote (leave empty = whatever :uat points at); getproperty: one component only"
         type: string
         default: ""
       migrate:
+        description: "Run the migration (the api image; ignored for a getproperty web / liff promotion)"
         type: boolean
         default: true
 
@@ -29,6 +43,9 @@ jobs:
     environment: production
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
+      api_tag: ${{ steps.tag.outputs.api_tag }}
+      web_tag: ${{ steps.tag.outputs.web_tag }}
+      liff_tag: ${{ steps.tag.outputs.liff_tag }}
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -37,16 +54,25 @@ jobs:
       - id: tag
         env:
           PRODUCT: ${{ inputs.product }}
+          COMPONENT: ${{ inputs.component }}
           WANT: ${{ inputs.image_tag }}
         run: |
-          case "$PRODUCT" in
-            getpack)     images="getpack/api getpack/web" ;;
-            getproperty) images="getproperty/api getproperty/web getproperty/liff" ;;
-            getpop)      images="getpop/api" ;;
+          set -euo pipefail
+          if [ "$PRODUCT" != getproperty ] && [ "$COMPONENT" != all ]; then
+            echo "::error::component $COMPONENT is for getproperty only"; exit 1
+          fi
+          case "$PRODUCT/$COMPONENT" in
+            getpack/all)          images="getpack/api getpack/web" ;;
+            getpop/all)           images="getpop/api" ;;
+            getproperty/all)      images="getproperty/api getproperty/web getproperty/liff" ;;
+            getproperty/api)      images="getproperty/api" ;;
+            getproperty/web)      images="getproperty/web" ;;
+            getproperty/liff)     images="getproperty/liff" ;;
           esac
-          # getproperty's images come from three repos (different sha tags): with no explicit tag each image
-          # resolves its own :uat; the output tag is the first image's (the api — IMAGE_TAG on the box), and the
-          # front ends run their moving :prod tag there (products/getproperty/docker-compose.yml).
+          # getproperty's images come from three repos (different sha tags): an explicit tag names one image's sha.
+          if [ "$PRODUCT/$COMPONENT" = getproperty/all ] && [ -n "$WANT" ]; then
+            echo "::error::getproperty's three images have different sha tags: pick a component to promote $WANT"; exit 1
+          fi
           first=""
           for img in $images; do
             tag="$WANT"
@@ -55,6 +81,7 @@ jobs:
               tag=$(aws ecr describe-images --repository-name "$img" --image-ids imageTag=uat \
                       --query 'imageDetails[0].imageTags[?starts_with(@, `sha-`)] | [0]' --output text)
             fi
+            [[ "$tag" =~ ^sha-[0-9a-f]+$ ]] || { echo "::error::$img: no sha tag to promote (got '$tag')"; exit 1; }
             manifest=$(aws ecr batch-get-image --repository-name "$img" --image-ids imageTag="$tag" \
                          --query 'images[0].imageManifest' --output text)
             [ "$manifest" != "None" ] || { echo "$img:$tag not found"; exit 1; }
@@ -62,14 +89,58 @@ jobs:
               || echo "$img:prod already points at $tag"
             echo "$img: $tag → prod"
             [ -n "$first" ] || first="$tag"
+            echo "${img#*/}_tag=$tag" >> "$GITHUB_OUTPUT"
           done
           echo "tag=$first" >> "$GITHUB_OUTPUT"
 
+  # getpack / getpop: one tag for every image of the product.
   deploy:
     needs: retag
+    if: inputs.product != 'getproperty'
     uses: ./.github/workflows/reusable-deploy.yml # same repo → relative path is fine here
     with:
       product: ${{ inputs.product }}
       environment: production
       image_tag: ${{ needs.retag.outputs.tag }}
       migrate: ${{ inputs.migrate }}
+
+  # getproperty: api (IMAGE_TAG + migration) first, then each front end as its own component — the order and the
+  # state file are the same as the three repos' deploy workflows produce.
+  deploy-api:
+    needs: retag
+    if: inputs.product == 'getproperty' && (inputs.component == 'all' || inputs.component == 'api')
+    uses: ./.github/workflows/reusable-deploy.yml
+    with:
+      product: getproperty
+      environment: production
+      image_tag: ${{ needs.retag.outputs.api_tag }}
+      migrate: ${{ inputs.migrate }}
+
+  deploy-web:
+    needs: [retag, deploy-api]
+    if: >-
+      always() && needs.retag.result == 'success' && needs.deploy-api.result != 'failure' &&
+      needs.deploy-api.result != 'cancelled' && inputs.product == 'getproperty' &&
+      (inputs.component == 'all' || inputs.component == 'web')
+    uses: ./.github/workflows/reusable-deploy.yml
+    with:
+      product: getproperty
+      component: web
+      environment: production
+      image_tag: ${{ needs.retag.outputs.web_tag }}
+      migrate: false
+
+  deploy-liff:
+    needs: [retag, deploy-api, deploy-web]
+    if: >-
+      always() && needs.retag.result == 'success' && needs.deploy-api.result != 'failure' &&
+      needs.deploy-api.result != 'cancelled' && needs.deploy-web.result != 'failure' &&
+      needs.deploy-web.result != 'cancelled' && inputs.product == 'getproperty' &&
+      (inputs.component == 'all' || inputs.component == 'liff')
+    uses: ./.github/workflows/reusable-deploy.yml
+    with:
+      product: getproperty
+      component: liff
+      environment: production
+      image_tag: ${{ needs.retag.outputs.liff_tag }}
+      migrate: false
