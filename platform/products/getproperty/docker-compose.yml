@@ -219,13 +219,15 @@ services:
   # One-shot, run by deploy-product.sh before `up` (profile, never started by `up`). Not `npx prisma migrate deploy`:
   # getproperty's `core` schema comes from @collective/asset-core and must migrate first; the image's runner applies
   # it, then prisma/migrations (recorded in _prisma_migrations exactly like Prisma), then the optional TimescaleDB
-  # step (D-162) — no Prisma CLI in the image.
+  # step (D-162), then the idempotent reference seed (SEED_REFERENCE) — no Prisma CLI in the image. It runs as the
+  # NOCREATEROLE product login (roles from postgres/init/20-getproperty.sh).
   migrate:
     <<: *api-base
     command: ["node", "dist/src/migrate.js"]
     environment:
       <<: *api-env
       TIMESCALEDB_MIGRATION: auto
+      SEED_REFERENCE: "true"
       OTEL_SERVICE_NAME: getproperty-migrate
     restart: "no"
     profiles: ["tools"]
