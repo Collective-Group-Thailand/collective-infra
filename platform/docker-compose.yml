@@ -143,8 +143,11 @@ services:
   # The HTTP calls carry x-emqx-auth-token (GETPROPERTY_EMQX_AUTH_TOKEN ← platform/emqx `getproperty_auth_token`);
   # /internal/* is docker-network only and Caddy answers 404 for it on every public host. With the API down the
   # hooks fail closed (a failed call counts as "ignore", so no authenticator allows): gateways keep their readings
-  # (store-and-forward) and reconnect with back-off. Env values in HOCON (listener chains, sources) — UNVERIFIED
-  # against a running EMQX 5.8 (no Docker here).
+  # (store-and-forward) and reconnect with back-off. Body field names are those of getproperty-api's
+  # EmqxAuthnRequest / EmqxAuthzRequest (src/core/devices/emqx-auth.service.ts, checked against 74bdcdc): authn
+  # transport, clientid, username, password, cert_common_name, cert_subject, peerhost; authz username, clientid,
+  # topic, action, qos, retain, peerhost. Env values in HOCON (listener chains, sources) — UNVERIFIED against a
+  # running EMQX 5.8 (no Docker here).
   emqx:
     image: emqx/emqx:5.8
     restart: unless-stopped

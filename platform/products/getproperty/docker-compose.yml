@@ -148,6 +148,13 @@ services:
       <<: *api-env
       PORT: "3000"
       OTEL_SERVICE_NAME: getproperty-api
+      # EMQX HTTP authn/authz (getproperty-api D-244, POST /internal/emqx/{authn,authz}): only callers on the
+      # `collective` network (EMQX) — narrower than the image default (loopback + every private range, which would
+      # include the VPC). Requests relayed by Caddy carry the internet client's address and get 404 (Caddy answers
+      # 404 for /internal/* itself). EMQX_AUTH_TOKEN comes from hooks/post-secrets.sh.
+      EMQX_HTTP_ALLOWED_CIDRS: 172.30.0.0/16,127.0.0.0/8
+      # EMQX_SERVICE_USERNAMES (optional, product secret): getproperty's users on the internal listener that authz
+      # allows below gp/v1/ (incl. $share/<group>/…); unset = MQTT_USERNAME, the one user api / worker / ingest share.
     deploy:
       resources:
         limits: { memory: 512M }
