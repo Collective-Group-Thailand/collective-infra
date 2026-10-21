@@ -51,3 +51,48 @@ compose_product() { # compose_product <product> <args…>
   docker compose --project-name "$product" --project-directory "$PLATFORM_DIR/products/$product" \
     --env-file "$PLATFORM_ENV_FILE" "${knobs[@]}" --env-file "$STATE_DIR/$product.env" "$@"
 }
+
+# --- Device CA (collective/<env>/platform/device-ca, getproperty-api D-235 / blueprint T-6) -----------------------
+# EMQX's device listener (8883, mutual TLS) and Caddy's DEVICE_HOST trust pool use the platform-owned device CA.
+DEVICE_TLS_DIR=/data/emqx/certs/device
+DEVICE_CA_SITE_FILE="$PLATFORM_DIR/caddy/sites/device-ca.pem"
+
+# install_device_tls <server_pem> <server_key> <ca_pem> <source label>
+#   server_pem = the broker certificate for MQTT_HOST (leaf first, then any intermediate), issued from the device CA;
+#   ca_pem     = the CA chain that verifies gateway client certificates (the gateways' caChainPem).
+# Writes the files EMQX reads, gives Caddy the trust pool (render-sites.sh un-skips the device host), and restarts
+# EMQX's ssl listener when anything changed.
+install_device_tls() {
+  local src="$4" changed=0 name
+  local -A content=([server.pem]="$1" [server.key]="$2" [ca.pem]="$3")
+  mkdir -p "$DEVICE_TLS_DIR"
+  for name in server.pem server.key ca.pem; do
+    printf '%s\n' "${content[$name]}" > "$DEVICE_TLS_DIR/$name.next"
+    if ! cmp -s "$DEVICE_TLS_DIR/$name.next" "$DEVICE_TLS_DIR/$name"; then
+      install -m 0600 -o 1000 -g 1000 "$DEVICE_TLS_DIR/$name.next" "$DEVICE_TLS_DIR/$name"; changed=1
+    fi
+    rm -f "$DEVICE_TLS_DIR/$name.next"
+  done
+  if ! cmp -s "$DEVICE_TLS_DIR/ca.pem" "$DEVICE_CA_SITE_FILE"; then
+    install -m 0644 "$DEVICE_TLS_DIR/ca.pem" "$DEVICE_CA_SITE_FILE"
+    "$PLATFORM_DIR/bin/render-sites.sh" || log "WARN: render-sites failed after the device CA changed"
+  fi
+  if [ "$changed" = 1 ]; then
+    log "device TLS updated from $src"
+    if docker ps --format '{{.Names}}' | grep -q '^platform-emqx-1$'; then
+      compose_platform exec -T emqx emqx ctl listeners restart ssl:default >/dev/null || compose_platform restart emqx
+    fi
+  fi
+}
+
+# EMQX refuses to start on a missing certfile: a throwaway self-signed placeholder until the real CA is filled in
+# (gateways cannot connect to it; Caddy's device host stays skipped because device-ca.pem is not written).
+ensure_device_tls_placeholder() {
+  [ -s "$DEVICE_TLS_DIR/server.pem" ] && return 0
+  mkdir -p "$DEVICE_TLS_DIR"
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 30 -subj "/CN=placeholder" \
+    -keyout "$DEVICE_TLS_DIR/server.key" -out "$DEVICE_TLS_DIR/server.pem" 2>/dev/null
+  cp "$DEVICE_TLS_DIR/server.pem" "$DEVICE_TLS_DIR/ca.pem"
+  chown -R 1000:1000 "$DEVICE_TLS_DIR"; chmod 0600 "$DEVICE_TLS_DIR/server.key"
+  log "device TLS: placeholder certificate (collective/${COLLECTIVE_ENV}/platform/device-ca not filled yet)"
+}

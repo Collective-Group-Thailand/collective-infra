@@ -1,5 +1,5 @@
 # Template → caddy/sites/getproperty.caddy (bin/render-sites.sh). Hosts from caddy/sites.<env>.yml.
-# requires-file: sites/getproperty-device-ca.pem
+# requires-file: sites/device-ca.pem
 # getproperty-api docs/deployment.md §4 is the source of these routes. Client IP (D-229): Caddy replaces
 # X-Forwarded-For of untrusted (internet) clients and appends the peer, so every container sees exactly one
 # trusted hop (TRUST_PROXY=1 / TRUSTED_HOPS=1).
@@ -51,13 +51,13 @@
 
 # Gateways (getproperty-edge) over HTTPS: bootstrap (one-time code, no certificate yet), certificate renewal and the
 # device endpoints with their X.509 client certificate. Caddy verifies a presented certificate against the
-# getproperty device CA (rendered by products/getproperty/hooks/post-secrets.sh) and forwards only its SHA-256;
+# platform device CA (collective/<env>/platform/device-ca, rendered by bin/render-device-ca.sh) and forwards only its SHA-256;
 # the API (DEVICE_MTLS_SOURCE=sha256_header) refuses /v1/device/* calls that need mTLS without it.
 {{DEVICE_HOST}} {
 	tls {
 		client_auth {
 			mode verify_if_given
-			trust_pool file /etc/caddy/sites/getproperty-device-ca.pem
+			trust_pool file /etc/caddy/sites/device-ca.pem
 		}
 	}
 	import security

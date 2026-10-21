@@ -1,41 +1,34 @@
 #!/bin/bash
 # getproperty after its secrets are rendered (bin/fetch-secrets.sh getproperty, deploys + hourly refresh):
-#  1. EMQX device listener TLS (getproperty-api docs/deployment.md §5): collective/<env>/getproperty/mqtt-tls =
-#     {"server_pem", "server_key", "ca_pem"} — the broker's server certificate issued from the getproperty device
-#     CA (`pnpm device:broker-cert` in getproperty-api) and the CA that verifies gateway client certificates.
-#     → /data/emqx/certs/getproperty/{server.pem,server.key,ca.pem}; the ssl listener restarts when they change.
-#  2. The device CA for Caddy's DEVICE_HOST client_auth → caddy/sites/getproperty-device-ca.pem, then
-#     render-sites.sh (the getproperty site is skipped until this file exists).
-#  3. The API's MQTT user on EMQX's internal listener (MQTT_USERNAME / MQTT_PASSWORD of the app secret):
+#  1. The device CA for the API (signs gateway CSRs at /v1/device/bootstrap and …/certificate/renew): from the platform
+#     secret collective/<env>/platform/device-ca (bin/render-device-ca.sh renders the same secret for EMQX and Caddy)
+#     → DEVICE_CA_CERT / DEVICE_CA_KEY / DEVICE_CA_CHAIN (base64 PEM) in /run/collective/getproperty.env, replacing
+#     any copy still in the product secret. Interim (box set up before T-6): when the platform secret is empty the
+#     product secret's own DEVICE_CA_* stay, and the legacy getproperty/mqtt-tls secret still feeds EMQX's listener.
+#  2. The API's MQTT user on EMQX's internal listener (MQTT_USERNAME / MQTT_PASSWORD of the app secret):
 #     bootstrap file for a fresh EMQX + an upsert through EMQX's REST API for a running one.
 # UNVERIFIED on a live box (written against the EMQX 5.8 and Caddy 2.10 documentation).
 source "$(dirname "$0")/../../../bin/lib.sh"
 
-TLS_DIR=/data/emqx/certs/getproperty
 USERS_DIR=/data/emqx/getproperty
-mkdir -p "$TLS_DIR" "$USERS_DIR"
-changed=0
+mkdir -p "$USERS_DIR"
+ENV_FILE="$RUN_DIR/getproperty.env"
 
-tls=$(secret_json getproperty/mqtt-tls)
-if [ -n "$tls" ] && jq -e '.server_pem and .server_key and .ca_pem' <<<"$tls" >/dev/null 2>&1; then
-  for pair in server_pem:server.pem server_key:server.key ca_pem:ca.pem; do
-    key=${pair%%:*}; file=${pair#*:}
-    jq -r ".$key" <<<"$tls" > "$TLS_DIR/$file.next"
-    if ! cmp -s "$TLS_DIR/$file.next" "$TLS_DIR/$file"; then
-      install -m 0600 -o 1000 -g 1000 "$TLS_DIR/$file.next" "$TLS_DIR/$file"; changed=1
-    fi
-    rm -f "$TLS_DIR/$file.next"
-  done
-  if ! cmp -s "$TLS_DIR/ca.pem" "$PLATFORM_DIR/caddy/sites/getproperty-device-ca.pem"; then
-    install -m 0644 "$TLS_DIR/ca.pem" "$PLATFORM_DIR/caddy/sites/getproperty-device-ca.pem"
-    "$PLATFORM_DIR/bin/render-sites.sh"
-  fi
-  if [ "$changed" = 1 ] && docker ps --format '{{.Names}}' | grep -q '^platform-emqx-1$'; then
-    compose_platform exec -T emqx emqx ctl listeners restart ssl:default >/dev/null || compose_platform restart emqx
-    log "getproperty mqtt tls updated"
-  fi
+ca=$(secret_json platform/device-ca)
+if [ -n "$ca" ] && jq -e '.issuing_cert_pem and .issuing_key_pem and .ca_chain_pem' <<<"$ca" >/dev/null 2>&1; then
+  b64() { jq -r ".$1" <<<"$ca" | base64 -w0; }
+  {
+    grep -v -E '^DEVICE_CA_(CERT|KEY|CHAIN)=' "$ENV_FILE" || true
+    printf "DEVICE_CA_CERT='%s'\nDEVICE_CA_KEY='%s'\nDEVICE_CA_CHAIN='%s'\n" "$(b64 issuing_cert_pem)" "$(b64 issuing_key_pem)" "$(b64 ca_chain_pem)"
+  } > "$ENV_FILE.next"
+  chmod 0600 "$ENV_FILE.next"; mv "$ENV_FILE.next" "$ENV_FILE"
 else
-  log "WARN: ${SECRETS_PREFIX}/getproperty/mqtt-tls not set — EMQX's device listener and the device host stay down"
+  log "WARN: ${SECRETS_PREFIX}/platform/device-ca not set — the API keeps DEVICE_CA_* from its own secret (interim)"
+  tls=$(secret_json getproperty/mqtt-tls)
+  if [ -n "$tls" ] && jq -e '.server_pem and .server_key and .ca_pem' <<<"$tls" >/dev/null 2>&1; then
+    install_device_tls "$(jq -r .server_pem <<<"$tls")" "$(jq -r .server_key <<<"$tls")" "$(jq -r .ca_pem <<<"$tls")" \
+      "getproperty/mqtt-tls (interim)"
+  fi
 fi
 
 # The API's broker login (internal listener 1883; never published)

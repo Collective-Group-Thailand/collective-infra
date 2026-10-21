@@ -15,19 +15,15 @@ systemctl enable --now collective-platform.service pgbackrest-backup.timer mqtt-
 bin/fetch-secrets.sh platform
 bin/render-sites.sh
 
-# 2b. getproperty's EMQX listener files must exist before EMQX starts (it refuses to boot on a missing certfile):
-#     render them now when the product's secrets are already filled, otherwise a throwaway self-signed placeholder
-#     that products/getproperty/hooks/post-secrets.sh replaces on the first deploy (the listener then restarts).
+# 2b. EMQX's device listener files must exist before EMQX starts (it refuses to boot on a missing certfile):
+#     fetch-secrets.sh platform rendered them from collective/<env>/platform/device-ca, or a throwaway placeholder.
+#     getproperty's secrets (its internal MQTT user) are rendered when the product is already set up.
+ensure_device_tls_placeholder
 if [ -d "$PLATFORM_DIR/products/getproperty" ]; then
-  bin/fetch-secrets.sh getproperty || log "getproperty secrets not ready yet (placeholder MQTT TLS)"
-  d=/data/emqx/certs/getproperty; mkdir -p "$d" /data/emqx/getproperty
-  if [ ! -s "$d/server.pem" ]; then
-    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 30 -subj "/CN=placeholder" \
-      -keyout "$d/server.key" -out "$d/server.pem" 2>/dev/null
-    cp "$d/server.pem" "$d/ca.pem"
-  fi
+  mkdir -p /data/emqx/getproperty
+  bin/fetch-secrets.sh getproperty || log "getproperty secrets not ready yet"
   [ -s /data/emqx/getproperty/users.json ] || echo '[]' > /data/emqx/getproperty/users.json
-  chown -R 1000:1000 "$d" /data/emqx/getproperty; chmod 0600 "$d/server.key"
+  chown -R 1000:1000 /data/emqx/getproperty
 fi
 
 # 3. ECR login (instance role) so platform/product pulls work

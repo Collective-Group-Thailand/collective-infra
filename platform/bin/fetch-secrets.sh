@@ -38,6 +38,9 @@ fetch_platform() {
     [ -f "$PLATFORM_DIR/caddy/sites/_platform_users" ] || echo "ops \$2a\$14\$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvali" > "$PLATFORM_DIR/caddy/sites/_platform_users"
   fi
   log "platform secrets rendered"
+
+  # Device CA → EMQX device listener, Caddy device-host trust pool (getproperty-api D-235)
+  "$PLATFORM_DIR/bin/render-device-ca.sh" || log "WARN: render-device-ca failed"
 }
 
 fetch_product() {

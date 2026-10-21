@@ -92,6 +92,9 @@ resource "aws_secretsmanager_secret" "platform" {
     "emqx",       # {"dashboard_password": "...", "api_key": "...", "api_secret": "..."}
     "grafana",    # {"prometheus_url","prometheus_user","loki_url","loki_user","tempo_url","tempo_user","api_key"}
     "caddy",      # {"acme_email": "..."}
+    # Device CA for IoT gateways (getproperty-api D-235): {"ca_chain_pem","issuing_cert_pem","issuing_key_pem",
+    # "broker_cert_pem","broker_key_pem"} — rendered for EMQX's 8883 listener, Caddy's device host and getproperty-api
+    "device-ca",
   ])
   name                    = "${local.secrets_prefix}/platform/${each.value}"
   recovery_window_in_days = var.environment == "prod" ? 30 : 7
