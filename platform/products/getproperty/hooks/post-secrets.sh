@@ -11,7 +11,6 @@
 # UNVERIFIED on a live box (written against the EMQX 5.8 and Caddy 2.10 documentation).
 source "$(dirname "$0")/../../../bin/lib.sh"
 
-mkdir -p /data/getproperty/clamav
 TLS_DIR=/data/emqx/certs/getproperty
 USERS_DIR=/data/emqx/getproperty
 mkdir -p "$TLS_DIR" "$USERS_DIR"

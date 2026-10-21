@@ -1,9 +1,12 @@
 # Shared platform services for one Collective box. Products attach to the `collective` network
 # and are deployed as separate compose projects (platform/products/<product>/docker-compose.yml).
 #
-#   docker compose --env-file /etc/collective/platform.env --env-file /run/collective/platform.secrets.env up -d
+#   docker compose --env-file /etc/collective/platform.env --env-file env/<env>.env --env-file /run/collective/platform.secrets.env up -d
+#   (bin/lib.sh compose_platform does exactly this)
 #
 # Memory limits are the contract that lets three products share 16 GB (PLAN.md). Keep them.
+# Platform budget ≈ 6 GB (locked 2026-10-21) = caddy 256M · postgres 3,328M · valkey 512M · emqx 512M · alloy 384M ·
+# clamav 1,152M = 6,144 MB. POSTGRES_MEMORY_LIMIT / CLAMAV_MEMORY_LIMIT are per-env knobs (platform/env/<env>.env).
 name: platform
 
 networks:
@@ -78,7 +81,7 @@ services:
     expose: ["5432"]
     deploy:
       resources:
-        limits: { memory: "${POSTGRES_MEMORY_LIMIT:-4g}" }
+        limits: { memory: "${POSTGRES_MEMORY_LIMIT:-3328m}" } # shared_buffers 1GB (postgresql.conf)
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -h 127.0.0.1"]
       interval: 10s
@@ -193,6 +196,32 @@ services:
       retries: 5
     logging:
       options: { tag: "platform/emqx" }
+
+  # ------------------------------------------------------------------ upload virus scan (shared)
+  # One clamd for every product on the box (getproperty-api D-233 / blueprint T-2): INSTREAM on 3310, reachable only on
+  # the `collective` network as platform-clamav-1:3310 (CLAMAV_HOST / CLAMAV_PORT in a product compose file). freshclam
+  # runs inside the image and updates the signatures in /data/clamav. clamd.conf sets ConcurrentDatabaseReload no so a
+  # signature reload does not hold two databases in memory (scans wait ~30-60 s during a reload instead); the steady
+  # RSS of the full database is ≈ 1.0-1.1 GB (UNVERIFIED on the box — watch container_memory_working_set_bytes).
+  clamav:
+    image: clamav/clamav-debian:1.4
+    restart: unless-stopped
+    volumes:
+      - ./clamav/clamd.conf:/etc/clamav/clamd.conf:ro
+      - /data/clamav:/var/lib/clamav
+    networks: [collective]
+    expose: ["3310"]
+    deploy:
+      resources:
+        limits: { memory: "${CLAMAV_MEMORY_LIMIT:-1152m}" }
+    healthcheck:
+      test: ["CMD-SHELL", "clamdcheck.sh || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 300s # first signature download on a fresh /data/clamav
+    logging:
+      options: { tag: "platform/clamav" }
 
   # ------------------------------------------------------------------ observability agent
   alloy:

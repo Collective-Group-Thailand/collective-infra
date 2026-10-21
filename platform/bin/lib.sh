@@ -31,13 +31,23 @@ json_to_env() {
     | "\($p)\(.key | ascii_upcase)=\(.value | tostring | @sh)"'
 }
 
+# Non-secret per-environment compose knobs (memory limits, modes) committed in platform/env/<env>.env. Later
+# --env-file arguments win, so the order is: box facts (platform.env) → env knobs → secrets / deploy state.
+env_knobs_args() {
+  local f="$PLATFORM_DIR/env/${COLLECTIVE_ENV}.env"
+  [ -f "$f" ] && printf -- '--env-file\n%s\n' "$f"
+  return 0
+}
+
 compose_platform() {
+  local knobs; mapfile -t knobs < <(env_knobs_args)
   docker compose --project-directory "$PLATFORM_DIR" \
-    --env-file "$PLATFORM_ENV_FILE" --env-file "$RUN_DIR/platform.secrets.env" "$@"
+    --env-file "$PLATFORM_ENV_FILE" "${knobs[@]}" --env-file "$RUN_DIR/platform.secrets.env" "$@"
 }
 
 compose_product() { # compose_product <product> <args…>
   local product="$1"; shift
+  local knobs; mapfile -t knobs < <(env_knobs_args)
   docker compose --project-name "$product" --project-directory "$PLATFORM_DIR/products/$product" \
-    --env-file "$PLATFORM_ENV_FILE" --env-file "$STATE_DIR/$product.env" "$@"
+    --env-file "$PLATFORM_ENV_FILE" "${knobs[@]}" --env-file "$STATE_DIR/$product.env" "$@"
 }

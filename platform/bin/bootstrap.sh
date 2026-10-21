@@ -36,6 +36,11 @@ aws ecr get-login-password --region "$AWS_REGION" \
 
 # 4. shared services
 compose_platform pull --quiet
+# shared ClamAV: freshclam writes /data/clamav as the image's `clamav` user (ids taken from the image itself)
+mkdir -p /data/clamav
+if ids=$(docker run --rm --entrypoint sh clamav/clamav-debian:1.4 -c 'echo "$(id -u clamav):$(id -g clamav)"' 2>/dev/null); then
+  chown "$ids" /data/clamav
+fi
 compose_platform up -d --remove-orphans
 log "waiting for postgres…"
 for i in $(seq 1 60); do
