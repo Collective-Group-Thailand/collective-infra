@@ -5,5 +5,6 @@ getpack:
 getproperty:
   WEB_HOST: uat.getproperty.example # TODO
   API_HOST: uat-api.getproperty.example
-getpop:
-  API_HOST: uat-api.getpop.example # TODO (web is Flutter → S3/CloudFront, no container)
+getbuild:
+  WEB_HOST: uat.getbuild.example # TODO domain
+  API_HOST: uat-api.getbuild.example

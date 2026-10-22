@@ -1,42 +1,68 @@
-# getpop on the shared box. Deployed with: bin/deploy-product.sh getpop <tag>
-# Env files (merged by compose_product in bin/lib.sh): /etc/collective/platform.env + /var/lib/collective/getpop.env (IMAGE_TAG)
-# App secrets: /run/collective/getpop.env (rendered from Secrets Manager collective/<env>/getpop/app)
+# getbuild on the shared box. Deployed with: bin/deploy-product.sh getbuild <tag>
+# Env files (merged by compose_product in bin/lib.sh): /etc/collective/platform.env + /var/lib/collective/getbuild.env (IMAGE_TAG)
+# App secrets: /run/collective/getbuild.env (rendered from Secrets Manager collective/<env>/getbuild/app)
 #
-# Memory budget: api 512M · worker 1G (BOQ/Excel exports) · migrate transient. No web container: Flutter web is static (S3/CloudFront).
-name: getpop
+# Memory budget: web 512M · api 512M · worker 1G (BOQ/Excel exports; PDFs via shared pdf-render queue) · migrate transient
+name: getbuild
 
 networks:
   collective:
     external: true
 
 x-api-base: &api-base
-  image: ${ECR_REGISTRY}/getpop/api:${IMAGE_TAG}
-  env_file: /run/collective/getpop.env
+  image: ${ECR_REGISTRY}/getbuild/api:${IMAGE_TAG}
+  env_file: /run/collective/getbuild.env
   environment:
     NODE_ENV: production
     PORT: "3000"
     TZ: Asia/Bangkok
     OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
-    OTEL_SERVICE_NAMESPACE: getpop
+    OTEL_SERVICE_NAMESPACE: getbuild
     AWS_REGION: ${AWS_REGION}
-    S3_BUCKET: collective-${COLLECTIVE_ENV}-getpop-assets
+    S3_BUCKET: collective-${COLLECTIVE_ENV}-getbuild-assets
   networks: [collective]
   restart: unless-stopped
   init: false # image already uses tini
 
 services:
+  web:
+    image: ${ECR_REGISTRY}/getbuild/web:${IMAGE_TAG}
+    container_name: getbuild-web
+    env_file: /run/collective/getbuild.env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      API_INTERNAL_URL: http://getbuild-api:3000 # server-side BFF → API over the docker network
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
+      OTEL_SERVICE_NAME: getbuild-web
+    networks: [collective]
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: { memory: 512M }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    labels:
+      collective.metrics: "true"
+      collective.metrics.port: "3000"
+      collective.metrics.path: "/api/metrics"
 
   api:
     <<: *api-base
-    container_name: getpop-api
+    container_name: getbuild-api
     environment:
       NODE_ENV: production
       PORT: "3000"
       TZ: Asia/Bangkok
       OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
-      OTEL_SERVICE_NAME: getpop-api
+      OTEL_SERVICE_NAME: getbuild-api
       AWS_REGION: ${AWS_REGION}
-      S3_BUCKET: collective-${COLLECTIVE_ENV}-getpop-assets
+      S3_BUCKET: collective-${COLLECTIVE_ENV}-getbuild-assets
     deploy:
       resources:
         limits: { memory: 512M }
@@ -51,18 +77,18 @@ services:
       collective.metrics.port: "3000"
       collective.metrics.path: "/metrics"
 
-  # BullMQ consumers: BOQ takeoff jobs, exports, e-Tax submissions, notifications
+  # BullMQ consumers: e-Tax submit, OCR hand-off, exports, sync fan-out, outbox relay, notifications
   worker:
     <<: *api-base
-    container_name: getpop-worker
+    container_name: getbuild-worker
     command: ["node", "dist/src/worker.js"]
     environment:
       NODE_ENV: production
       TZ: Asia/Bangkok
       OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
-      OTEL_SERVICE_NAME: getpop-worker
+      OTEL_SERVICE_NAME: getbuild-worker
       AWS_REGION: ${AWS_REGION}
-      S3_BUCKET: collective-${COLLECTIVE_ENV}-getpop-assets
+      S3_BUCKET: collective-${COLLECTIVE_ENV}-getbuild-assets
       WORKER_CONCURRENCY: "4"
     deploy:
       resources:

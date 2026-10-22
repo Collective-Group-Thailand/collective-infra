@@ -9,7 +9,7 @@ on:
     inputs:
       product:
         type: choice
-        options: [getpack, getproperty, getpop]
+        options: [getpack, getproperty, getbuild]
         required: true
       image_tag:
         description: "sha-xxxxxxx to promote (leave empty = whatever :uat points at)"
@@ -42,7 +42,7 @@ jobs:
           case "$PRODUCT" in
             getpack)     images="getpack/api getpack/web" ;;
             getproperty) images="getproperty/api getproperty/web" ;;
-            getpop)      images="getpop/api" ;;
+            getbuild)      images="getbuild/api" ;;
           esac
           tag="$WANT"
           for img in $images; do

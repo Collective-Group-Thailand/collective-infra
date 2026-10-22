@@ -18,7 +18,7 @@ fetch_platform() {
     echo "POSTGRES_SUPERUSER_PASSWORD=$(jq -r .superuser_password <<<"$pg")"
     echo "GETPACK_DB_PASSWORD=$(jq -r .getpack_password <<<"$pg")"
     echo "GETPROPERTY_DB_PASSWORD=$(jq -r .getproperty_password <<<"$pg")"
-    echo "GETPOP_DB_PASSWORD=$(jq -r .getpop_password <<<"$pg")"
+    echo "GETBUILD_DB_PASSWORD=$(jq -r .getbuild_password <<<"$pg")"
     echo "VALKEY_PASSWORD=$(jq -r .password <<<"$valkey")"
     echo "EMQX_DASHBOARD_PASSWORD=$(jq -r .dashboard_password <<<"$emqx")"
     echo "CADDY_ACME_EMAIL=$(jq -r '.acme_email // "ops@example.invalid"' <<<"${caddy:-{\}}")"
@@ -51,6 +51,6 @@ fetch_product() {
 
 case "${1:-all}" in
   platform) fetch_platform ;;
-  all) fetch_platform; for p in getpack getproperty getpop; do [ -d "$PLATFORM_DIR/products/$p" ] && fetch_product "$p" || true; done ;;
+  all) fetch_platform; for p in getpack getproperty getbuild; do [ -d "$PLATFORM_DIR/products/$p" ] && fetch_product "$p" || true; done ;;
   *) fetch_product "$1" ;;
 esac

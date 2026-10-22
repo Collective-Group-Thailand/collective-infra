@@ -1,0 +1,23 @@
+# Template → caddy/sites/getbuild.caddy. Hosts from caddy/sites.<env>.yml.
+
+{{WEB_HOST}} {
+	import security
+	import compress
+	reverse_proxy getbuild-web:3000 {
+		header_up X-Forwarded-Proto {scheme}
+	}
+}
+
+{{API_HOST}} {
+	import security
+	import compress
+	request_body {
+		max_size 32MB
+	}
+		reverse_proxy getbuild-api:3000 {
+		header_up X-Forwarded-Proto {scheme}
+		transport http {
+			read_timeout 120s # BOQ/PDF exports
+		}
+	}
+}

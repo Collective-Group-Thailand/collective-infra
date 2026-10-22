@@ -46,7 +46,7 @@ docker exec "$NAME" pg_isready -U postgres -h 127.0.0.1 -p 5433 || die "restored
 {
   echo "== restore drill $NAME  source=$SRC_ENV  ${PITR:+pitr=$PITR}"
   echo "latest xact: $(docker exec "$NAME" psql -U postgres -p 5433 -Atc "select pg_last_committed_xact()" 2>/dev/null || echo n/a)"
-  for db in getpack getproperty getpop; do
+  for db in getpack getproperty getbuild; do
     echo "-- $db"
     docker exec "$NAME" psql -U postgres -p 5433 -d "$db" -Atc "
       select 'tables=' || count(*) from information_schema.tables where table_schema='public';

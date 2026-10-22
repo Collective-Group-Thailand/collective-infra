@@ -2,7 +2,7 @@
 
 Infrastructure-as-code for Collective Group (Thailand): **Terraform** for AWS (`ap-southeast-7`), the
 **docker-compose platform** that runs on each environment's EC2 box, and the **reusable GitHub Actions**
-that product repos (getpack, getproperty, getpop) call to build and deploy.
+that product repos (getpack, getproperty, getbuild) call to build and deploy.
 
 Read `PLAN.md` first — it records the decisions and the rollout phases. This file is the how-to.
 
@@ -20,7 +20,7 @@ each EC2 box (/opt/collective/infra = this repo)
 
 - Terraform ≥ 1.10, AWS CLI v2, an AWS profile with admin on the Collective account
 - Region **Asia Pacific (Thailand)** enabled: Account → AWS Regions → enable `ap-southeast-7`
-- GitHub org with repos `collective-infra`, `getpack-api`, `getpack-web`, `getproperty-api`, `getproperty-web`, `getpop-api`
+- GitHub org with repos `collective-infra`, `getpack-api`, `getpack-web`, `getproperty-api`, `getproperty-web`, `getbuild-api`
 
 ## 2. Bootstrap (once)
 
@@ -51,7 +51,7 @@ After `apply` of an env, do these by hand (one time each):
    | Secret | JSON |
    |---|---|
    | `collective/<env>/platform/deploy-key` | *raw* private key (read-only GitHub deploy key for this repo) |
-   | `collective/<env>/platform/postgres` | `{"superuser_password":"…","getpack_password":"…","getproperty_password":"…","getpop_password":"…"}` |
+   | `collective/<env>/platform/postgres` | `{"superuser_password":"…","getpack_password":"…","getproperty_password":"…","getbuild_password":"…"}` |
    | `collective/<env>/platform/valkey` | `{"password":"…"}` |
    | `collective/<env>/platform/emqx` | `{"dashboard_password":"…"}` |
    | `collective/<env>/platform/grafana` | `{"prometheus_url":"https://prometheus-….grafana.net/api/prom/push","prometheus_user":"123","loki_url":"https://logs-….grafana.net/loki/api/v1/push","loki_user":"456","tempo_url":"https://tempo-….grafana.net/otlp","tempo_user":"789","api_key":"glc_…"}` |

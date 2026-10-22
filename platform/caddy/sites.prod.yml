@@ -4,5 +4,6 @@ getpack:
 getproperty:
   WEB_HOST: app.getproperty.example # TODO
   API_HOST: api.getproperty.example
-getpop:
-  API_HOST: api.getpop.example # TODO
+getbuild:
+  WEB_HOST: app.getbuild.example # TODO domain
+  API_HOST: api.getbuild.example

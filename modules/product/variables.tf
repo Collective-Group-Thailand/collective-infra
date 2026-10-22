@@ -12,7 +12,7 @@ variable "region" {
 }
 
 variable "product" {
-  description = "getpack | getproperty | getpop"
+  description = "getpack | getproperty | getbuild"
   type        = string
   validation {
     condition     = can(regex("^[a-z][a-z0-9-]{2,20}$", var.product))

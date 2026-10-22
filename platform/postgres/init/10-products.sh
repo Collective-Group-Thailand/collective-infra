@@ -25,7 +25,7 @@ SQL
 
 create_product getpack     "${GETPACK_DB_PASSWORD}"     "vector pg_stat_statements pgcrypto citext"
 create_product getproperty "${GETPROPERTY_DB_PASSWORD}" "timescaledb vector pg_stat_statements pgcrypto citext"
-create_product getpop      "${GETPOP_DB_PASSWORD}"      "vector pg_stat_statements pgcrypto citext"
+create_product getbuild      "${GETBUILD_DB_PASSWORD}"      "vector pg_stat_statements pgcrypto citext"
 
 psql -v ON_ERROR_STOP=1 --username postgres --dbname postgres -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
 

@@ -12,13 +12,13 @@ github_org   = "collective-group-th"      # TODO: real org
 product_repos = [
   "getpack-api", "getpack-web",
   "getproperty-api", "getproperty-web",
-  "getpop-api",
+  "getbuild-api",
 ]
 
 ecr_repositories = [
   "getpack/api", "getpack/web",
   "getproperty/api", "getproperty/web",
-  "getpop/api",
+  "getbuild/api",
 ]
 
 products = {
@@ -31,8 +31,8 @@ products = {
     cors_origins = ["https://uat.getproperty.example"] # TODO domain
     ses_domain   = null                                # enable when the domain is decided
   }
-  getpop = {
-    cors_origins = ["https://uat.getpop.example"] # TODO domain
+  getbuild = {
+    cors_origins = ["https://uat.getbuild.example"] # TODO domain
     ses_domain   = null
   }
 }

@@ -2,7 +2,7 @@
 
 > Repo นี้คือ **source of truth** ของ cloud infrastructure ทั้งหมดของ Collective Group (Thailand):
 > Terraform สำหรับ AWS, docker compose ของ shared platform บน EC2, และ reusable GitHub Actions
-> ที่ product repos (getpack, getproperty, getpop) เรียกใช้ ทุกการแก้ไข cloud ต้องผ่าน PR ที่ repo นี้ — ไม่แก้ผ่าน console
+> ที่ product repos (getpack, getproperty, getbuild) เรียกใช้ ทุกการแก้ไข cloud ต้องผ่าน PR ที่ repo นี้ — ไม่แก้ผ่าน console
 
 ## 0. Decisions (locked 2026-10-20)
 
@@ -68,8 +68,8 @@ collective-infra/
 ### Phase 0 — Prerequisites (manual, ~1 hr)
 - [ ] AWS account ของ Collective Group (แยกจาก account ส่วนตัว/Abbon), enable region **Asia Pacific (Thailand)** ใน Account settings
 - [ ] IAM Identity Center หรือ IAM user ชั่วคราวที่มี AdministratorAccess สำหรับ bootstrap (ลบหลัง Phase 1)
-- [ ] GitHub org สร้างแล้ว; repos: `collective-infra`, `getpack-api`, `getpack-web`, `getproperty-api`, `getproperty-web`, `getpop-api` (ชื่อจริงใส่ใน `envs/*/terraform.tfvars`)
-- [ ] Domain: `getpack.co` + domain ของ getproperty / getpop (Route 53 หรือ registrar อื่น — Terraform ออก DNS records ให้ทั้งสองแบบ)
+- [ ] GitHub org สร้างแล้ว; repos: `collective-infra`, `getpack-api`, `getpack-web`, `getproperty-api`, `getproperty-web`, `getbuild-api` (ชื่อจริงใส่ใน `envs/*/terraform.tfvars`)
+- [ ] Domain: `getpack.co` + domain ของ getproperty / getbuild (Route 53 หรือ registrar อื่น — Terraform ออก DNS records ให้ทั้งสองแบบ)
 - [ ] Grafana Cloud Free stack สร้างแล้ว → เก็บ URL/API key ใน Secrets Manager `collective/<env>/platform/grafana`
 - [ ] **getpack-web ยังไม่มี Dockerfile** → เพิ่ม `output: 'standalone'` ใน `next.config.ts` และ Dockerfile (template อยู่ใน `platform/products/getpack/Dockerfile.web.example`)
 
