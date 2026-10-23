@@ -141,7 +141,7 @@ services:
       EMQX_LISTENERS__WS__DEFAULT__BIND: "0.0.0.0:8083"              # Caddy → wss for browsers
       EMQX_LISTENERS__WSS__DEFAULT__ENABLE: "false"
       EMQX_ALLOW_ANONYMOUS: "false"
-      EMQX_PROMETHEUS__ENABLE: "true"
+      # Prometheus stats are scraped by Alloy at /api/v5/prometheus/stats; push-gateway stays off (default)
     volumes:
       - /data/emqx:/opt/emqx/data
     networks: [collective]

@@ -66,8 +66,17 @@ prometheus.exporter.unix "host" {
   }
 }
 
+// Exporter targets default instance to the container id, which changes on every recreate → pin to the host name
+discovery.relabel "host" {
+  targets = prometheus.exporter.unix.host.targets
+  rule {
+    target_label = "instance"
+    replacement  = sys.env("HOSTNAME_OVERRIDE")
+  }
+}
+
 prometheus.scrape "host" {
-  targets         = prometheus.exporter.unix.host.targets
+  targets         = discovery.relabel.host.output
   forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
   scrape_interval = "60s"
   job_name        = "node"
@@ -122,8 +131,16 @@ prometheus.exporter.postgres "shared" {
   }
 }
 
+discovery.relabel "postgres" {
+  targets = prometheus.exporter.postgres.shared.targets
+  rule {
+    target_label = "instance"
+    replacement  = "postgres"
+  }
+}
+
 prometheus.scrape "postgres" {
-  targets         = prometheus.exporter.postgres.shared.targets
+  targets         = discovery.relabel.postgres.output
   forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
   scrape_interval = "60s"
   job_name        = "postgres"
@@ -134,8 +151,16 @@ prometheus.exporter.redis "valkey" {
   redis_password = sys.env("VALKEY_PASSWORD")
 }
 
+discovery.relabel "valkey" {
+  targets = prometheus.exporter.redis.valkey.targets
+  rule {
+    target_label = "instance"
+    replacement  = "valkey"
+  }
+}
+
 prometheus.scrape "valkey" {
-  targets         = prometheus.exporter.redis.valkey.targets
+  targets         = discovery.relabel.valkey.output
   forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
   scrape_interval = "60s"
   job_name        = "valkey"
