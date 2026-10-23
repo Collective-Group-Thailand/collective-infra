@@ -164,6 +164,7 @@ module "deploy_role" {
   environment              = var.environment
   region                   = var.region
   github_org               = var.github_org
+  github_org_id            = var.github_org_id
   github_repos             = concat([var.infra_repo], var.product_repos)
   github_environment       = local.github_env
   github_oidc_provider_arn = local.oidc_arn

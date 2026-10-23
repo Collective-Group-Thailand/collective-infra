@@ -39,8 +39,8 @@ provider "aws" {
 }
 
 module "stack" {
-  source    = "../_stack"
-  providers = { aws = aws, aws.ses = aws.ses }
+  source     = "../_stack"
+  providers  = { aws = aws, aws.ses = aws.ses }
   ses_region = var.ses_region
 
   environment              = "uat"
@@ -53,6 +53,7 @@ module "stack" {
   platform_hostname        = var.platform_hostname
   alert_emails             = var.alert_emails
   github_org               = var.github_org
+  github_org_id            = var.github_org_id
   infra_branch             = var.infra_branch
   product_repos            = var.product_repos
   ecr_repositories         = var.ecr_repositories

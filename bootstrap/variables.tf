@@ -14,6 +14,12 @@ variable "github_org" {
   type        = string
 }
 
+variable "github_org_id" {
+  description = "Numeric GitHub org id. Set when the org issues immutable OIDC subjects (repo:<org>@<id>/<repo>@<repo-id>:…)"
+  type        = number
+  default     = null
+}
+
 variable "infra_repo" {
   type    = string
   default = "collective-infra"

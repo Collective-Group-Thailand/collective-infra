@@ -124,8 +124,8 @@ resource "aws_ssm_parameter" "cw_agent_config" {
   value = jsonencode({
     agent = { metrics_collection_interval = 60, run_as_user = "root" }
     metrics = {
-      namespace         = "Collective/${var.environment}"
-      append_dimensions = { InstanceId = "$${aws:InstanceId}" }
+      namespace              = "Collective/${var.environment}"
+      append_dimensions      = { InstanceId = "$${aws:InstanceId}" }
       aggregation_dimensions = [["InstanceId"], ["InstanceId", "path"]]
       metrics_collected = {
         mem  = { measurement = ["mem_used_percent"], metrics_collection_interval = 60 }
@@ -143,15 +143,15 @@ resource "aws_ssm_parameter" "cw_agent_config" {
         files = {
           collect_list = [
             {
-              file_path       = "/var/log/cloud-init-output.log"
-              log_group_name  = "/${var.name_prefix}/${var.environment}/cloud-init"
-              log_stream_name = "{instance_id}"
+              file_path         = "/var/log/cloud-init-output.log"
+              log_group_name    = "/${var.name_prefix}/${var.environment}/cloud-init"
+              log_stream_name   = "{instance_id}"
               retention_in_days = 30
             },
             {
-              file_path       = "/var/log/collective/*.log"
-              log_group_name  = "/${var.name_prefix}/${var.environment}/platform"
-              log_stream_name = "{instance_id}"
+              file_path         = "/var/log/collective/*.log"
+              log_group_name    = "/${var.name_prefix}/${var.environment}/platform"
+              log_stream_name   = "{instance_id}"
               retention_in_days = 30
             },
           ]

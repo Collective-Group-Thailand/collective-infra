@@ -100,11 +100,15 @@ data "aws_iam_policy_document" "gha_terraform_trust" {
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values = [
+      values = concat([
         "repo:${var.github_org}/${var.infra_repo}:ref:refs/heads/main",
         "repo:${var.github_org}/${var.infra_repo}:pull_request",
         "repo:${var.github_org}/${var.infra_repo}:environment:*",
-      ]
+        ], var.github_org_id == null ? [] : [
+        "repo:${var.github_org}@${var.github_org_id}/${var.infra_repo}@*:ref:refs/heads/main",
+        "repo:${var.github_org}@${var.github_org_id}/${var.infra_repo}@*:pull_request",
+        "repo:${var.github_org}@${var.github_org_id}/${var.infra_repo}@*:environment:*",
+      ])
     }
   }
 }

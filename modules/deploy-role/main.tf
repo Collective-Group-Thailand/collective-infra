@@ -8,7 +8,11 @@ locals {
   partition  = data.aws_partition.current.partition
   account_id = data.aws_caller_identity.current.account_id
   # Only workflows running in the matching GitHub Environment (e.g. "uat" / "production") may assume this role.
-  subjects = [for r in var.github_repos : "repo:${var.github_org}/${r}:environment:${var.github_environment}"]
+  # Classic subject, plus GitHub's immutable form (org/repo pinned by id; repo ids vary, the org id does not).
+  subjects = concat(
+    [for r in var.github_repos : "repo:${var.github_org}/${r}:environment:${var.github_environment}"],
+    var.github_org_id == null ? [] : [for r in var.github_repos : "repo:${var.github_org}@${var.github_org_id}/${r}@*:environment:${var.github_environment}"],
+  )
 }
 
 data "aws_iam_policy_document" "trust" {
