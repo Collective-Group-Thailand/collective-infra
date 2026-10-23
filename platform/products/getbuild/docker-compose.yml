@@ -1,5 +1,5 @@
 # getbuild on the shared box. Deployed with: bin/deploy-product.sh getbuild <tag>
-# Env files (merged by compose_product in bin/lib.sh): /etc/collective/platform.env + /var/lib/collective/getbuild.env (IMAGE_TAG)
+# Env files (merged by compose_product in bin/lib.sh): /etc/collective/platform.env + /var/lib/collective/getbuild.env (API_TAG / WEB_TAG)
 # App secrets: /run/collective/getbuild.env (rendered from Secrets Manager collective/<env>/getbuild/app)
 #
 # Memory budget: web 512M · api 512M · worker 1G (BOQ/Excel exports; PDFs via shared pdf-render queue) · migrate transient
@@ -10,7 +10,7 @@ networks:
     external: true
 
 x-api-base: &api-base
-  image: ${ECR_REGISTRY}/getbuild/api:${IMAGE_TAG}
+  image: ${ECR_REGISTRY}/getbuild/api:${API_TAG:-none}
   env_file: /run/collective/getbuild.env
   environment:
     NODE_ENV: production
@@ -26,7 +26,7 @@ x-api-base: &api-base
 
 services:
   web:
-    image: ${ECR_REGISTRY}/getbuild/web:${IMAGE_TAG}
+    image: ${ECR_REGISTRY}/getbuild/web:${WEB_TAG:-none}
     container_name: getbuild-web
     env_file: /run/collective/getbuild.env
     environment:

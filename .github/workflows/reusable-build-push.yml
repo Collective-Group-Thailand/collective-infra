@@ -2,6 +2,7 @@ name: Reusable · build arm64 image → ECR
 
 # Called by product repos. Builds the Dockerfile natively on an arm64 runner, pushes
 # :sha-<short> and the moving tag for the target env (:uat on main, :prod on release).
+# Pass `ref` when the caller is triggered by workflow_run (build the commit CI actually tested).
 
 on:
   workflow_call:
@@ -28,6 +29,10 @@ on:
         description: "Newline-separated KEY=value (e.g. NEXT_PUBLIC_API_URL=https://…)"
         type: string
         default: ""
+      ref:
+        description: "Commit to build (default: the triggering commit)"
+        type: string
+        default: ""
       runner:
         description: "ubuntu-24.04-arm (GitHub-hosted arm64) or a self-hosted label"
         type: string
@@ -49,6 +54,8 @@ jobs:
       image_tag: ${{ steps.meta.outputs.sha_tag }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -60,7 +67,8 @@ jobs:
 
       - id: meta
         run: |
-          echo "sha_tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          sha=$(git rev-parse HEAD)
+          echo "sha_tag=sha-${sha::7}" >> "$GITHUB_OUTPUT"
           echo "registry=${{ steps.ecr.outputs.registry }}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3

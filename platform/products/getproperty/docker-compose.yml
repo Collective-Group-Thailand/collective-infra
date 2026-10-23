@@ -1,5 +1,5 @@
 # getproperty on the shared box. Deployed with: bin/deploy-product.sh getproperty <tag>
-# Env files (merged by compose_product in bin/lib.sh): /etc/collective/platform.env + /var/lib/collective/getproperty.env (IMAGE_TAG)
+# Env files (merged by compose_product in bin/lib.sh): /etc/collective/platform.env + /var/lib/collective/getproperty.env (API_TAG / WEB_TAG)
 # App secrets: /run/collective/getproperty.env (rendered from Secrets Manager collective/<env>/getproperty/app)
 #
 # Memory budget: web 512M · api 512M · worker 768M (billing PDFs rendered via getpack pdf-render queue when available)
@@ -10,7 +10,7 @@ networks:
     external: true
 
 x-api-base: &api-base
-  image: ${ECR_REGISTRY}/getproperty/api:${IMAGE_TAG}
+  image: ${ECR_REGISTRY}/getproperty/api:${API_TAG:-none}
   env_file: /run/collective/getproperty.env
   environment:
     NODE_ENV: production
@@ -27,7 +27,7 @@ x-api-base: &api-base
 
 services:
   web:
-    image: ${ECR_REGISTRY}/getproperty/web:${IMAGE_TAG}
+    image: ${ECR_REGISTRY}/getproperty/web:${WEB_TAG:-none}
     container_name: getproperty-web
     env_file: /run/collective/getproperty.env
     environment:

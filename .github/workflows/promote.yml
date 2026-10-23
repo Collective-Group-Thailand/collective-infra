@@ -1,6 +1,6 @@
 name: Promote image uat → prod
 
-# Re-tag the image(s) currently deployed to UAT (or an explicit sha tag) as :prod and deploy to
+# Re-tag one image currently deployed to UAT (or an explicit sha tag) as :prod and deploy it to
 # production. No rebuild: the bytes that passed UAT are the bytes that ship. Approval gate = the
 # `production` GitHub Environment.
 
@@ -10,6 +10,10 @@ on:
       product:
         type: choice
         options: [getpack, getproperty, getbuild]
+        required: true
+      component:
+        type: choice
+        options: [api, web]
         required: true
       image_tag:
         description: "sha-xxxxxxx to promote (leave empty = whatever :uat points at)"
@@ -37,27 +41,22 @@ jobs:
       - id: tag
         env:
           PRODUCT: ${{ inputs.product }}
+          COMPONENT: ${{ inputs.component }}
           WANT: ${{ inputs.image_tag }}
         run: |
-          case "$PRODUCT" in
-            getpack)     images="getpack/api getpack/web" ;;
-            getproperty) images="getproperty/api getproperty/web" ;;
-            getbuild)      images="getbuild/api" ;;
-          esac
+          img="$PRODUCT/$COMPONENT"
           tag="$WANT"
-          for img in $images; do
-            if [ -z "$tag" ]; then
-              # resolve :uat → its sha-* sibling tag
-              tag=$(aws ecr describe-images --repository-name "$img" --image-ids imageTag=uat \
-                      --query 'imageDetails[0].imageTags[?starts_with(@, `sha-`)] | [0]' --output text)
-            fi
-            manifest=$(aws ecr batch-get-image --repository-name "$img" --image-ids imageTag="$tag" \
-                         --query 'images[0].imageManifest' --output text)
-            [ "$manifest" != "None" ] || { echo "$img:$tag not found"; exit 1; }
-            aws ecr put-image --repository-name "$img" --image-tag prod --image-manifest "$manifest" >/dev/null \
-              || echo "$img:prod already points at $tag"
-            echo "$img: $tag → prod"
-          done
+          if [ -z "$tag" ]; then
+            # resolve :uat → its sha-* sibling tag
+            tag=$(aws ecr describe-images --repository-name "$img" --image-ids imageTag=uat \
+                    --query 'imageDetails[0].imageTags[?starts_with(@, `sha-`)] | [0]' --output text)
+          fi
+          manifest=$(aws ecr batch-get-image --repository-name "$img" --image-ids imageTag="$tag" \
+                       --query 'images[0].imageManifest' --output text)
+          [ "$manifest" != "None" ] || { echo "$img:$tag not found"; exit 1; }
+          aws ecr put-image --repository-name "$img" --image-tag prod --image-manifest "$manifest" >/dev/null \
+            || echo "$img:prod already points at $tag"
+          echo "$img: $tag → prod"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
   deploy:
@@ -65,6 +64,11 @@ jobs:
     uses: ./.github/workflows/reusable-deploy.yml # same repo → relative path is fine here
     with:
       product: ${{ inputs.product }}
+      component: ${{ inputs.component }}
       environment: production
       image_tag: ${{ needs.retag.outputs.tag }}
       migrate: ${{ inputs.migrate }}
+
+# NOTE (web): Next.js inlines NEXT_PUBLIC_* at build time, so a web image built for UAT carries UAT
+# public values (e.g. NEXT_PUBLIC_ENV_BADGE=uat). Promote web only once its public env is identical
+# across envs; until then build the production web image from a release tag with production build args.

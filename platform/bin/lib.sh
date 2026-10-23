@@ -43,7 +43,26 @@ compose_platform() {
 }
 
 compose_product() { # compose_product <product> <args…>
+  # env files: platform.env · <product>.env (API_TAG/WEB_TAG state) · <product>.hosts.env (render-sites.sh)
   local product="$1"; shift
-  docker compose --project-name "$product" --project-directory "$PLATFORM_DIR/products/$product" \
-    --env-file "$PLATFORM_ENV_FILE" --env-file "$STATE_DIR/$product.env" "$@"
+  local files=(--env-file "$PLATFORM_ENV_FILE") f
+  for f in "$STATE_DIR/$product.env" "$STATE_DIR/$product.hosts.env"; do
+    [ -f "$f" ] && files+=(--env-file "$f")
+  done
+  docker compose --project-name "$product" --project-directory "$PLATFORM_DIR/products/$product" "${files[@]}" "$@"
+}
+
+# component_services <product> <component> → compose services running the <product>/<component> image
+# (profile-only services such as `migrate` are excluded because `config` skips inactive profiles)
+component_services() {
+  compose_product "$1" config --format json \
+    | jq -r --arg img "/$1/$2:" '.services | to_entries[] | select(.value.image | contains($img)) | .key'
+}
+
+# state_get <product> <KEY> / state_set <product> <KEY> <value>  (KEY=value lines in $STATE_DIR/<product>.env)
+state_get() { grep -s "^$2=" "$STATE_DIR/$1.env" | tail -1 | cut -d= -f2- || true; }
+state_set() {
+  local f="$STATE_DIR/$1.env"; touch "$f"
+  grep -v "^$2=" "$f" > "$f.tmp" || true
+  echo "$2=$3" >> "$f.tmp"; mv "$f.tmp" "$f"
 }

@@ -44,12 +44,20 @@ fi
 # 6. MQTT cert (needs Caddy to have issued the cert for MQTT_HOSTNAME first; timer retries)
 bin/sync-mqtt-cert.sh || log "mqtt cert not ready yet (timer will retry)"
 
-# 7. bring up any product that has been deployed before (state file exists)
+# 7. bring up every component deployed before (API_TAG / WEB_TAG in $STATE_DIR/<product>.env)
 for f in "$STATE_DIR"/*.env; do
   [ -f "$f" ] || continue
   p=$(basename "$f" .env)
-  log "restoring product $p"
-  bin/fetch-secrets.sh "$p" && compose_product "$p" up -d --remove-orphans || log "WARN: $p failed to start"
+  [[ "$p" == *.* ]] && continue   # <product>.hosts.env etc.
+  [ -d "$PLATFORM_DIR/products/$p" ] || continue
+  bin/fetch-secrets.sh "$p" || { log "WARN: $p secrets failed"; continue; }
+  for c in api web; do
+    [ -n "$(state_get "$p" "$(tr '[:lower:]' '[:upper:]' <<<"$c")_TAG")" ] || continue
+    mapfile -t svcs < <(component_services "$p" "$c")
+    [ "${#svcs[@]}" -gt 0 ] || continue
+    log "restoring $p/$c (${svcs[*]})"
+    compose_product "$p" up -d --no-deps "${svcs[@]}" || log "WARN: $p/$c failed to start"
+  done
 done
 
 log "bootstrap complete"

@@ -81,41 +81,39 @@ After `apply` of an env, do these by hand (one time each):
 Each product repo adds **one** workflow next to its existing `ci.yml` / `release.yml`:
 
 ```yaml
-# .github/workflows/deploy.yml  (getpack-api example)
+# getpack-api/.github/workflows/deploy.yml (getpack-web is the same with image getpack/web, component web)
 name: Deploy
 on:
-  push: { branches: [main] }        # → UAT
-  push: { tags: ["v*.*.*"] }        # → production (after approval)   ← merge into one `on:` block
+  workflow_run: { workflows: [CI], types: [completed], branches: [main] }   # → UAT, only after CI is green
+  workflow_dispatch:
 permissions: { id-token: write, contents: read, packages: read }
 
 jobs:
-  build-uat:
-    if: github.ref == 'refs/heads/main'
-    uses: <org>/collective-infra/.github/workflows/reusable-build-push.yml@v1
-    with: { image: getpack/api, environment: uat, moving_tag: uat }
-  deploy-uat:
-    needs: build-uat
-    uses: <org>/collective-infra/.github/workflows/reusable-deploy.yml@v1
-    with: { product: getpack, environment: uat, image_tag: ${{ needs.build-uat.outputs.image_tag }} }
-
-  build-prod:
-    if: startsWith(github.ref, 'refs/tags/v')
-    uses: <org>/collective-infra/.github/workflows/reusable-build-push.yml@v1
-    with: { image: getpack/api, environment: production, moving_tag: prod }
-  deploy-prod:
-    needs: build-prod
-    uses: <org>/collective-infra/.github/workflows/reusable-deploy.yml@v1
-    with: { product: getpack, environment: production, image_tag: ${{ needs.build-prod.outputs.image_tag }} }
+  build:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    uses: Collective-Group-Thailand/collective-infra/.github/workflows/reusable-build-push.yml@v1
+    with:
+      image: getpack/api
+      environment: uat
+      moving_tag: uat
+      ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+  deploy:
+    needs: build
+    uses: Collective-Group-Thailand/collective-infra/.github/workflows/reusable-deploy.yml@v1
+    with: { product: getpack, component: api, environment: uat, image_tag: "${{ needs.build.outputs.image_tag }}" }
 ```
 
 Notes
-- A product with two images (api + web) must push **both** with the same `image_tag` before `reusable-deploy`
-  runs — either one monorepo workflow, or the web repo deploys with `migrate: false` after api.
-- Alternative to rebuilding on tag: `promote.yml` (manual) re-tags the sha that passed UAT as `:prod`.
-- Tag `v1` of this repo = the reusable-workflow API. Bump deliberately.
-- Contract the compose templates expect from images: `/health` on `:3000` (api), `/api/healthz` on `:3000` (web),
-  worker health on `:3001`, Prometheus `/metrics`, OTLP to `$OTEL_EXPORTER_OTLP_ENDPOINT`.
-  Migration = `npx prisma migrate deploy` inside the api image.
+- **Each image deploys on its own** (`component` = `api` | `web`): the box keeps `API_TAG` / `WEB_TAG` per product in
+  `/var/lib/collective/<product>.env`, and rollback is per component. api deploys run migrations first.
+- Production: `promote.yml` (manual, `production` environment approval) re-tags the api sha that passed UAT as `:prod`.
+  Web bakes `NEXT_PUBLIC_*` at build time, so production web is built from a release tag with production build args.
+- The private `collective-infra` repo must allow reuse: Settings → Actions → General → Access →
+  *Accessible from repositories in the organization*.
+- Tag `v1` of this repo = the reusable-workflow API. Move it deliberately (`git tag -f v1 && git push -f origin v1`).
+- Contract the compose templates expect from images: api `/health` on `:3000`; web answers on `:3000` (any non-5xx);
+  worker has no HTTP port; OTLP to `$OTEL_EXPORTER_OTLP_ENDPOINT`.
+  Migration = `/opt/prisma-cli/node_modules/.bin/prisma migrate deploy` inside the api image.
 
 ## 5. Day-2 operations
 
@@ -124,7 +122,7 @@ Notes
 | Shell on a box | `aws ssm start-session --target <instance-id>` (no SSH, no keys) |
 | Logs / metrics | Grafana Cloud (labels `env`, `product`, `service`, `level`); host alarms → SNS email |
 | Deploy status | GitHub Actions run → SSM output; on the box `/var/log/collective/platform.log` |
-| Roll back | `sudo /opt/collective/platform/bin/rollback.sh <product>` (deploy also auto-rolls back on failed health) |
+| Roll back | `sudo /opt/collective/platform/bin/rollback.sh <product> <api|web>` (deploy also auto-rolls back on failed health) |
 | Backups | nightly 01:30 pgBackRest (full Sun / diff) → `s3://collective-<env>-backups/pgbackrest/<env>`; EBS snapshot 02:00 (DLM) |
 | Verify backups | `docker exec platform-postgres-1 pgbackrest --stanza=collective info` |
 | **Restore drill (monthly)** | on UAT: `sudo /opt/collective/platform/bin/restore-drill.sh prod` → report in `s3://…-backups/drills/` |
@@ -133,7 +131,7 @@ Notes
 | Change hostnames | edit `platform/caddy/sites.<env>.yml` → PR → `platform-deploy.yml` |
 | Resize box | change `instance_type` in `envs/<env>/terraform.tfvars` → PR (stop/start, ~3 min downtime) |
 | Grow /data | bump `data_volume_size_gb` → apply → on box `sudo xfs_growfs /data` |
-| Rotate a secret | update Secrets Manager → `secrets-refresh.timer` renders hourly → next deploy picks it up (or `deploy-product.sh <p> <same-tag>`) |
+| Rotate a secret | update Secrets Manager → `secrets-refresh.timer` renders hourly → next deploy picks it up (or `deploy-product.sh <p> <component> <same-tag>`) |
 | Peel a product to RDS | `pg_dump` its database → RDS; change only that product's `DATABASE_URL` secret; nothing else moves |
 
 ## 6. Conventions

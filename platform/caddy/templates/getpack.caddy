@@ -1,7 +1,8 @@
 # Template → rendered by bin/render-sites.sh into caddy/sites/getpack.caddy (gitignored).
-# {{WEB_HOST}} / {{API_HOST}} come from caddy/sites.<env>.yml.
+# {{WEB_HOST}} / {{ADMIN_HOST}} / {{PARTNER_HOST}} / {{API_HOST}} come from caddy/sites.<env>.yml.
+# getpack-web serves three zones by Host header (customer / admin / partner) from one container.
 
-{{WEB_HOST}} {
+{{WEB_HOST}}, {{ADMIN_HOST}}, {{PARTNER_HOST}} {
 	import security
 	import compress
 

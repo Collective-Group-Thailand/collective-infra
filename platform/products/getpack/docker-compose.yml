@@ -1,6 +1,10 @@
-# getpack on the shared box. Deployed with: bin/deploy-product.sh getpack <tag>
-# Env files (merged by compose_product in bin/lib.sh): /etc/collective/platform.env + /var/lib/collective/getpack.env (IMAGE_TAG)
-# App secrets: /run/collective/getpack.env (rendered from Secrets Manager collective/<env>/getpack/app)
+# getpack on the shared box. Deployed per component (api and web ship from separate repos):
+#   bin/deploy-product.sh getpack api <tag>   → api, worker (+ migrate one-shot)
+#   bin/deploy-product.sh getpack web <tag>   → web
+# Env files (compose_product in bin/lib.sh): /etc/collective/platform.env
+#   + /var/lib/collective/getpack.env        (API_TAG / WEB_TAG, written by deploy-product.sh)
+#   + /var/lib/collective/getpack.hosts.env  (WEB_HOST / ADMIN_HOST / PARTNER_HOST / API_HOST, from render-sites.sh)
+# App secrets (api + worker only): /run/collective/getpack.env, rendered from Secrets Manager collective/<env>/getpack/app
 #
 # Memory budget (16 GB box): web 512M · api 640M · worker 2G (Chromium) · migrate transient
 name: getpack
@@ -10,47 +14,40 @@ networks:
     external: true
 
 x-api-base: &api-base
-  image: ${ECR_REGISTRY}/getpack/api:${IMAGE_TAG}
+  image: ${ECR_REGISTRY}/getpack/api:${API_TAG:-none}
   env_file: /run/collective/getpack.env
-  environment:
-    NODE_ENV: production
-    PORT: "3000"
-    TZ: Asia/Bangkok
-    OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
-    OTEL_SERVICE_NAMESPACE: getpack
-    AWS_REGION: ${AWS_REGION}
-    S3_BUCKET: collective-${COLLECTIVE_ENV}-getpack-assets
   networks: [collective]
   restart: unless-stopped
   init: false # image already uses tini
 
 services:
   web:
-    image: ${ECR_REGISTRY}/getpack/web:${IMAGE_TAG}
+    image: ${ECR_REGISTRY}/getpack/web:${WEB_TAG:-none}
     container_name: getpack-web
-    env_file: /run/collective/getpack.env
+    # No app secrets: the web tier holds no keys (ADR-0005 — the BFF talks to getpack-api over the docker network)
     environment:
       NODE_ENV: production
       PORT: "3000"
       HOSTNAME: 0.0.0.0
-      API_INTERNAL_URL: http://getpack-api:3000 # server-side BFF → API over the docker network
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
-      OTEL_SERVICE_NAME: getpack-web
+      TZ: Asia/Bangkok
+      PUBLIC_HOST: ${WEB_HOST:?run bin/render-sites.sh}
+      ADMIN_HOST: ${ADMIN_HOST:?run bin/render-sites.sh}
+      PARTNER_HOST: ${PARTNER_HOST:?run bin/render-sites.sh}
+      API_INTERNAL_URL: http://getpack-api:3000
+      TRUSTED_PROXY_HOPS: "1" # Caddy
+      SENTRY_ENVIRONMENT: ${COLLECTIVE_ENV}
     networks: [collective]
     restart: unless-stopped
     deploy:
       resources:
         limits: { memory: 512M }
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/healthz >/dev/null || exit 1"]
+      # Unknown Host headers are refused by src/proxy.ts, so any non-5xx answer proves the server is up
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/robots.txt').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))\""]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 30s
-    labels:
-      collective.metrics: "true"
-      collective.metrics.port: "3000"
-      collective.metrics.path: "/api/metrics"
 
   api:
     <<: *api-base
@@ -72,12 +69,9 @@ services:
       timeout: 5s
       retries: 3
       start_period: 40s
-    labels:
-      collective.metrics: "true"
-      collective.metrics.port: "3000"
-      collective.metrics.path: "/metrics"
 
-  # BullMQ consumers, outbox relay, PDFs (Chromium) — the only Chromium on the box by design
+  # BullMQ consumers, outbox relay, PDFs (Chromium) — the only Chromium on the box by design.
+  # No HTTP server, so no healthcheck: restart policy covers crashes; queue depth is watched in Grafana.
   worker:
     <<: *api-base
     container_name: getpack-worker
@@ -95,21 +89,14 @@ services:
     deploy:
       resources:
         limits: { memory: 2G }
-    healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 40s
-    labels:
-      collective.metrics: "true"
-      collective.metrics.port: "3001"
-      collective.metrics.path: "/metrics"
 
-  # One-shot: `prisma migrate deploy`. Not started by `up` (profile), only by deploy-product.sh.
+  # One-shot: `prisma migrate deploy` (Prisma CLI bundled at /opt/prisma-cli in the api image).
+  # Not started by `up` (profile); run by deploy-product.sh before api/worker are replaced.
   migrate:
     <<: *api-base
-    command: ["sh", "-c", "corepack enable >/dev/null 2>&1 || true; npx prisma migrate deploy"]
+    command: ["/opt/prisma-cli/node_modules/.bin/prisma", "migrate", "deploy", "--config", "/opt/prisma-cli/prisma.config.ts"]
+    environment:
+      NODE_ENV: production
     restart: "no"
     profiles: ["tools"]
     deploy:

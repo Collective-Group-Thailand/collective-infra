@@ -2,6 +2,8 @@
 getpack:
   WEB_HOST: uat.getpack.co
   API_HOST: uat-api.getpack.co
+  ADMIN_HOST: admin-uat.getpack.co     # getpack-web admin zone (staff console)
+  PARTNER_HOST: partner-uat.getpack.co # getpack-web partner zone (factories)
 getproperty:
   WEB_HOST: uat.getproperty.example # TODO
   API_HOST: uat-api.getproperty.example
