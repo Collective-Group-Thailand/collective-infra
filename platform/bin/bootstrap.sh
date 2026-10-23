@@ -9,7 +9,9 @@ log "bootstrap platform env=$COLLECTIVE_ENV"
 # 1. systemd units (timers for backups, cert sync; service that re-renders secrets at boot)
 install -m 0644 systemd/*.service systemd/*.timer /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now collective-platform.service pgbackrest-backup.timer mqtt-cert-sync.timer secrets-refresh.timer
+# collective-platform.service runs THIS script at boot → only enable it; starting it here would wait on itself.
+systemctl enable collective-platform.service
+systemctl enable --now pgbackrest-backup.timer mqtt-cert-sync.timer secrets-refresh.timer
 
 # 2. secrets + Caddy sites
 bin/fetch-secrets.sh platform

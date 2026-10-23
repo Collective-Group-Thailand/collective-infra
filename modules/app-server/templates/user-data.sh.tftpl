@@ -39,7 +39,7 @@ done
 if [ -z "$DEV" ]; then echo "data volume ${data_volume_id} not attached yet — skipping mount"; else
   if ! blkid "$DEV" >/dev/null 2>&1; then
     echo "formatting $DEV as xfs"
-    mkfs.xfs -L collective-data "$DEV"
+    mkfs.xfs -L cdata "$DEV"   # XFS labels max 12 chars
   fi
   UUID=$(blkid -s UUID -o value "$DEV")
   mkdir -p /data
