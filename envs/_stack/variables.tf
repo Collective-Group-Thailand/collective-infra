@@ -89,3 +89,8 @@ variable "schedule" {
     stop_cron  = optional(string, "0 20 ? * MON-FRI *")
   })
 }
+
+variable "ses_region" {
+  type    = string
+  default = "ap-southeast-1"
+}

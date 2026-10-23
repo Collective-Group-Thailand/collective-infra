@@ -66,10 +66,10 @@ variable "secrets_prefix" {
   type        = string
 }
 
-variable "extra_policy_arns" {
-  description = "Per-product IAM policies (S3/Secrets/SES) to attach to the instance role"
-  type        = list(string)
-  default     = []
+variable "extra_policies" {
+  description = "Per-product IAM policies (S3/Secrets/SES) to attach to the instance role, keyed by product name"
+  type        = map(string)
+  default     = {}
 }
 
 variable "github_org" {

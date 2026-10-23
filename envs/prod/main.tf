@@ -24,8 +24,24 @@ provider "aws" {
   }
 }
 
+# SES is not offered in ap-southeast-7 → email identities live in Singapore
+provider "aws" {
+  alias  = "ses"
+  region = var.ses_region
+  default_tags {
+    tags = {
+      Project     = "collective-platform"
+      Environment = "prod"
+      ManagedBy   = "terraform"
+      Root        = "prod"
+    }
+  }
+}
+
 module "stack" {
-  source = "../_stack"
+  source    = "../_stack"
+  providers = { aws = aws, aws.ses = aws.ses }
+  ses_region = var.ses_region
 
   environment              = "prod"
   region                   = var.region

@@ -18,5 +18,7 @@ output "backend_hcl" {
     region       = "${var.region}"
     encrypt      = true
     use_lockfile = true
+    # Terraform CLI validates S3 backend regions against a built-in list; ap-southeast-7 is newer than some releases
+    skip_region_validation = true
   EOT
 }

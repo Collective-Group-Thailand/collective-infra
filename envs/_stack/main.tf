@@ -102,6 +102,8 @@ resource "aws_secretsmanager_secret" "platform" {
 module "product" {
   for_each        = var.products
   source          = "../../modules/product"
+  providers       = { aws = aws, aws.ses = aws.ses }
+  ses_region      = var.ses_region
   name_prefix     = var.name_prefix
   environment     = var.environment
   region          = var.region
@@ -128,7 +130,7 @@ module "app_server" {
   backup_bucket_name           = aws_s3_bucket.backups.bucket
   backup_bucket_arn            = aws_s3_bucket.backups.arn
   secrets_prefix               = local.secrets_prefix
-  extra_policy_arns            = [for p in module.product : p.policy_arn]
+  extra_policies               = { for k, p in module.product : k => p.policy_arn }
   github_org                   = var.github_org
   infra_repo                   = var.infra_repo
   infra_branch                 = var.infra_branch

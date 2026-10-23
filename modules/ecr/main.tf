@@ -27,10 +27,10 @@ resource "aws_ecr_lifecycle_policy" "this" {
         rulePriority = 1
         description  = "Keep the last ${var.keep_sha_images} sha-tagged images"
         selection = {
-          tagStatus     = "tagged"
+          tagStatus      = "tagged"
           tagPatternList = ["sha-*"]
-          countType     = "imageCountMoreThan"
-          countNumber   = var.keep_sha_images
+          countType      = "imageCountMoreThan"
+          countNumber    = var.keep_sha_images
         }
         action = { type = "expire" }
       },

@@ -25,7 +25,7 @@ output "ses_dns_records" {
       { name = "${t}._domainkey.${var.ses_domain}", type = "CNAME", value = "${t}.dkim.amazonses.com" }
     ],
     [
-      { name = "mail.${var.ses_domain}", type = "MX", value = "10 feedback-smtp.${var.region}.amazonses.com" },
+      { name = "mail.${var.ses_domain}", type = "MX", value = "10 feedback-smtp.${var.ses_region}.amazonses.com" },
       { name = "mail.${var.ses_domain}", type = "TXT", value = "v=spf1 include:amazonses.com -all" },
       { name = "_dmarc.${var.ses_domain}", type = "TXT", value = "v=DMARC1; p=quarantine; rua=mailto:dmarc@${var.ses_domain}; adkim=s; aspf=s" },
     ]

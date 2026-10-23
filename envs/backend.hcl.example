@@ -3,3 +3,4 @@ bucket       = "collective-tfstate-123456789012"
 region       = "ap-southeast-7"
 encrypt      = true
 use_lockfile = true
+skip_region_validation = true

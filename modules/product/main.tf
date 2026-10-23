@@ -107,6 +107,7 @@ resource "aws_secretsmanager_secret_version" "app_placeholder" {
 
 # --- SES: sending identity ---------------------------------------------------------------------
 resource "aws_sesv2_email_identity" "domain" {
+  provider       = aws.ses # SES is not offered in ap-southeast-7; sends from ses_region
   count          = var.ses_domain != null ? 1 : 0
   email_identity = var.ses_domain
   tags           = local.tags
@@ -116,6 +117,7 @@ resource "aws_sesv2_email_identity" "domain" {
 }
 
 resource "aws_sesv2_email_identity_mail_from_attributes" "domain" {
+  provider               = aws.ses
   count                  = var.ses_domain != null ? 1 : 0
   email_identity         = aws_sesv2_email_identity.domain[0].email_identity
   mail_from_domain       = "mail.${var.ses_domain}"
@@ -138,7 +140,7 @@ resource "aws_route53_record" "mail_from_mx" {
   name    = "mail.${var.ses_domain}"
   type    = "MX"
   ttl     = 600
-  records = ["10 feedback-smtp.${var.region}.amazonses.com"]
+  records = ["10 feedback-smtp.${var.ses_region}.amazonses.com"]
 }
 
 resource "aws_route53_record" "mail_from_spf" {

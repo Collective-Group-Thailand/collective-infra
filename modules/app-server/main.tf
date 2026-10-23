@@ -109,8 +109,9 @@ resource "aws_iam_role_policy" "instance_inline" {
   policy = data.aws_iam_policy_document.instance_inline.json
 }
 
+# Keyed by product name (known at plan time); the ARN values may be unknown until apply.
 resource "aws_iam_role_policy_attachment" "extra" {
-  for_each   = toset(var.extra_policy_arns)
+  for_each   = var.extra_policies
   role       = aws_iam_role.instance.name
   policy_arn = each.value
 }
@@ -239,7 +240,8 @@ resource "aws_instance" "this" {
   })
 
   lifecycle {
-    ignore_changes = [ami, user_data]
+    # associate_public_ip_address reads back true once the EIP is attached → would force replacement every plan
+    ignore_changes = [ami, user_data, associate_public_ip_address]
   }
 }
 
@@ -390,7 +392,7 @@ resource "aws_iam_role_policy_attachment" "dlm" {
 }
 
 resource "aws_dlm_lifecycle_policy" "data_daily" {
-  description        = "${local.name}: daily snapshot of the data volume"
+  description        = "${local.name} daily snapshot of the data volume" # DLM allows only [0-9A-Za-z _-]
   execution_role_arn = aws_iam_role.dlm.arn
   state              = "ENABLED"
 

@@ -61,6 +61,7 @@ jobs:
           region       = "${{ env.AWS_REGION }}"
           encrypt      = true
           use_lockfile = true
+          skip_region_validation = true
           EOF
       - name: Init + validate
         working-directory: envs/${{ matrix.root }}
@@ -121,6 +122,7 @@ jobs:
           region       = "${{ env.AWS_REGION }}"
           encrypt      = true
           use_lockfile = true
+          skip_region_validation = true
           EOF
       - name: Apply
         working-directory: envs/${{ matrix.root }}

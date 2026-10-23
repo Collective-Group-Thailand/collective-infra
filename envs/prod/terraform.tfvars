@@ -7,8 +7,8 @@ data_volume_size_gb      = 120
 snapshot_retention_count = 7
 platform_hostname        = "platform.getpack.co" # TODO: or a collective-group domain
 
-alert_emails = ["ops@collective.example"] # TODO
-github_org   = "collective-group-th"      # TODO: real org
+alert_emails = ["piyapan.pak@gmail.com"]   # TODO
+github_org   = "Collective-Group-Thailand" # TODO: real org
 
 product_repos = [
   "getpack-api", "getpack-web",

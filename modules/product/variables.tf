@@ -53,3 +53,9 @@ variable "enable_sqs" {
   type        = bool
   default     = false
 }
+
+variable "ses_region" {
+  description = "Region of the aliased aws.ses provider (SES is not available in ap-southeast-7)"
+  type        = string
+  default     = "ap-southeast-1"
+}
