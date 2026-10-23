@@ -24,6 +24,12 @@ for product, vars_ in sites.items():
     # hosts also go to the product's compose (e.g. getpack-web needs PUBLIC_HOST/ADMIN_HOST/PARTNER_HOST)
     (state_dir / f"{product}.hosts.env").write_text("".join(f"{k}={v}\n" for k, v in vars_.items()))
     tmpl = caddy_dir / "templates" / f"{product}.caddy"
+    rendered = out_dir / f"{product}.caddy"
+    # Placeholder domains (*.example, RFC 2606) cannot get certificates; serving them only makes
+    # Caddy retry ACME forever. The product goes live once real hostnames are in sites.<env>.yml.
+    if any(v.endswith(".example") for v in vars_.values()):
+        rendered.unlink(missing_ok=True)
+        print(f"skip {product}: placeholder hostnames"); continue
     if not tmpl.exists():
         print(f"skip {product}: no template"); continue
     text = tmpl.read_text()
@@ -32,7 +38,7 @@ for product, vars_ in sites.items():
         sys.exit(f"{product}: missing {sorted(missing)} in {yml}")
     for k, v in vars_.items():
         text = text.replace("{{%s}}" % k, v)
-    (out_dir / f"{product}.caddy").write_text(text)
+    rendered.write_text(text)
     print(f"rendered {product}.caddy")
 PY
 
