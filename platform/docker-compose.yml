@@ -54,7 +54,7 @@ services:
       # product role passwords consumed by postgres/init/10-products.sh on first start
       GETPACK_DB_PASSWORD: ${GETPACK_DB_PASSWORD}
       GETPROPERTY_DB_PASSWORD: ${GETPROPERTY_DB_PASSWORD}
-      GETPOP_DB_PASSWORD: ${GETPOP_DB_PASSWORD}
+      GETBUILD_DB_PASSWORD: ${GETBUILD_DB_PASSWORD}
       # pgBackRest → S3 via instance role (no keys). IMDSv2 hop limit is 2 so containers can reach it.
       PGBACKREST_STANZA: collective
       PGBACKREST_CONFIG: /etc/pgbackrest/pgbackrest.conf # image default points inside PGDATA
