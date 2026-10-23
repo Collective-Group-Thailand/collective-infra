@@ -1,7 +1,8 @@
 name: Terraform
 
 # PR  → fmt + validate + plan for every root touched (plan posted as a PR comment)
-# main → apply global → uat → prod; prod apply waits for approval in the `production` GitHub Environment.
+# main → apply global → uat. prod only by hand (workflow_dispatch root=prod), gated by the `terraform-prod`
+# environment's required reviewer — production is never created or changed by a merge alone.
 
 on:
   pull_request:
@@ -103,7 +104,7 @@ jobs:
     strategy:
       max-parallel: 1
       matrix:
-        root: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.root)) || fromJSON('["global","uat","prod"]') }}
+        root: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.root)) || fromJSON('["global","uat"]') }}
     # `terraform-prod` requires a reviewer in repo Settings → Environments; the others auto-approve.
     environment: ${{ matrix.root == 'prod' && 'terraform-prod' || 'terraform-apply' }}
     concurrency: terraform-${{ matrix.root }}
