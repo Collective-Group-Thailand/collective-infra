@@ -57,6 +57,7 @@ services:
       GETPOP_DB_PASSWORD: ${GETPOP_DB_PASSWORD}
       # pgBackRest → S3 via instance role (no keys). IMDSv2 hop limit is 2 so containers can reach it.
       PGBACKREST_STANZA: collective
+      PGBACKREST_CONFIG: /etc/pgbackrest/pgbackrest.conf # image default points inside PGDATA
       PGBACKREST_REPO1_S3_BUCKET: ${BACKUP_BUCKET}
       PGBACKREST_REPO1_S3_REGION: ${AWS_REGION}
       PGBACKREST_REPO1_S3_ENDPOINT: s3.${AWS_REGION}.amazonaws.com
@@ -159,6 +160,7 @@ services:
   # ------------------------------------------------------------------ observability agent
   alloy:
     image: grafana/alloy:v1.11.0
+    profiles: ["observability"] # enabled by bin/lib.sh once the platform/grafana secret is set
     restart: unless-stopped
     command:
       - run

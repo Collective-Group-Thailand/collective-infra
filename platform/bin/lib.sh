@@ -32,6 +32,12 @@ json_to_env() {
 }
 
 compose_platform() {
+  # Alloy (profile "observability") runs only once Grafana Cloud credentials exist
+  if grep -qE "^GRAFANA_PROMETHEUS_URL='?https" "$RUN_DIR/platform.secrets.env" 2>/dev/null; then
+    export COMPOSE_PROFILES=observability
+  else
+    unset COMPOSE_PROFILES
+  fi
   docker compose --project-directory "$PLATFORM_DIR" \
     --env-file "$PLATFORM_ENV_FILE" --env-file "$RUN_DIR/platform.secrets.env" "$@"
 }
