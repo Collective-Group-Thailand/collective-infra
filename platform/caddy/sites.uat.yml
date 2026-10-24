@@ -5,6 +5,7 @@ getpack:
   ADMIN_HOST: admin-uat.getpack.co     # getpack-web admin zone (staff console)
   PARTNER_HOST: partner-uat.getpack.co # getpack-web partner zone (factories)
 getproperty: # owner console, staff PWA, admin, LIFF, API, gateways (mTLS), MQTT broker
+  MARKETING_HOST: uat.getproperty.app # platform public site (getproperty-web marketing pages); rest → OWNER_HOST
   OWNER_HOST: uat-app.getproperty.app
   STAFF_HOST: uat-staff.getproperty.app
   ADMIN_HOST: uat-admin.getproperty.app

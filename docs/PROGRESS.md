@@ -4,6 +4,21 @@ Newest first. Decisions that belong to a product are recorded in that product's 
 `docs/decisions.md`); this file records what was done here, the assumptions taken, and what this repo needs from
 product repos.
 
+## 2026-10-24 — getproperty public site (MARKETING_HOST)
+
+`getproperty.app` (UAT `uat.getproperty.app`) is the platform's public site, not the owner console (which stays on
+`app.` / `uat-app.`). It is served by getproperty-web with `MARKETING_HOST` set: the marketing pages (`/`, `/pricing`,
+`/legal/*`) answer there and every other path is a 308 to `OWNER_HOST`.
+
+| Area | Change |
+|---|---|
+| Hosts | `sites.<env>.yml` getproperty `MARKETING_HOST` (uat `uat.getproperty.app`, prod `getproperty.app`); prod also `MARKETING_WWW_HOST: www.getproperty.app` |
+| Caddy | `getproperty.caddy`: `MARKETING_HOST` joins the getproperty-web block; new `getproperty-www.caddy` (308 www → apex), rendered only where `MARKETING_WWW_HOST` is set |
+| render-sites | New template marker `# requires-var: KEY` — the template is skipped (not an error) in an env whose sites yml lacks `KEY` |
+| Secret | `init-secrets.sh` writes `WEB__MARKETING_HOST`; an existing secret needs it added by hand (`aws secretsmanager put-secret-value`) |
+| Healthcheck | `MARKETING_HOST` maps to web (default), `/health` there answers 308 — accepted |
+| DNS | Cloudflare A `uat` (and prod `@`, `www`) → the box EIP, DNS only |
+
 ## 2026-10-22 — aligned with getproperty-api 74bdcdc (D-239–D-248, ADR-0012–0015, RUNBOOK §§12–15)
 
 | Item | Change |

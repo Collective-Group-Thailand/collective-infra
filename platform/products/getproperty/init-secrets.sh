@@ -31,6 +31,7 @@ esac
 D=getproperty.app
 OWNER="${H}app.$D" STAFF="${H}staff.$D" ADMIN="${H}admin.$D" LIFF="${H}liff.$D"
 API="${H}api.$D" DEVICE="${H}device.$D" MQTT="${H}mqtt.$D"
+MARKETING="$SES_DOMAIN"   # the platform's public site (caddy/sites.<env>.yml MARKETING_HOST)
 
 for c in aws jq; do command -v "$c" >/dev/null || { echo "missing: $c"; exit 1; }; done
 # OpenSSL 3 (macOS ships LibreSSL, which lacks Ed25519 keys and -addext): Homebrew's openssl@3 when present
@@ -112,7 +113,7 @@ if [ -z "$(current "$PREFIX/getproperty/app")" ]; then
     --arg api "https://$API" --arg owner "https://$OWNER" --arg staff "https://$STAFF" --arg liff "https://$LIFF" \
     --arg mqtt "mqtts://$MQTT:8883" --arg mqttws "wss://$MQTT/mqtt" \
     --arg from "getproperty <no-reply@${SES_DOMAIN}>" \
-    --arg oh "$OWNER" --arg sh "$STAFF" --arg ah "$ADMIN" --arg badge "$BADGE" \
+    --arg oh "$OWNER" --arg sh "$STAFF" --arg ah "$ADMIN" --arg mh "$MARKETING" --arg badge "$BADGE" \
     --arg assets "https://collective-${ENV}-getproperty-assets.s3.${REGION}.amazonaws.com" \
     '{
       DATABASE_URL:$db, DATABASE_APP_ROLE:"gp_app", DATABASE_PLATFORM_ROLE:"gp_platform",
@@ -129,7 +130,7 @@ if [ -z "$(current "$PREFIX/getproperty/app")" ]; then
       WEB_PUSH_VAPID_PUBLIC_KEY:$vpub, WEB_PUSH_VAPID_PRIVATE_KEY:$vpriv, WEB_PUSH_SUBJECT:"mailto:ops@getproperty.app",
       SLIP_VERIFY_API_KEY:"", AI_GATEWAY_URL:"", AI_GATEWAY_API_KEY:"", SENTRY_DSN:"",
       DOCS_ENABLED:"false",
-      WEB__OWNER_HOST:$oh, WEB__STAFF_HOST:$sh, WEB__ADMIN_HOST:$ah,
+      WEB__OWNER_HOST:$oh, WEB__STAFF_HOST:$sh, WEB__ADMIN_HOST:$ah, WEB__MARKETING_HOST:$mh,
       WEB__NEXT_PUBLIC_ENV_BADGE:$badge, WEB__NEXT_PUBLIC_ASSET_BASE_URL:$assets,
       WEB__NEXT_PUBLIC_VAPID_PUBLIC_KEY:$vpub,
       LIFF__NEXT_PUBLIC_LIFF_ID:"", LIFF__NEXT_PUBLIC_ENV_BADGE:$badge, LIFF__NEXT_PUBLIC_ASSET_BASE_URL:$assets,

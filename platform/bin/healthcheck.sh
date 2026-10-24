@@ -1,7 +1,7 @@
 #!/bin/bash
 # Post-deploy smoke test for one component: its containers are healthy and its public hostnames
 # answer through Caddy. api → API_HOST (+ MQTT_HOST); liff → LIFF_HOST; web → every other host of the product
-# (WEB/ADMIN/PARTNER/OWNER/STAFF…). DEVICE_HOST (mutual TLS) is not probed.
+# (WEB/ADMIN/PARTNER/OWNER/STAFF/MARKETING…). DEVICE_HOST (mutual TLS) is not probed.
 #   healthcheck.sh <product> <component>
 source "$(dirname "$0")/lib.sh"
 PRODUCT="${1:?product}"; COMPONENT="${2:?component (api|web)}"

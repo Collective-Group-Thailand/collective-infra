@@ -1,0 +1,6 @@
+# Template → caddy/sites/getproperty-www.caddy (bin/render-sites.sh). Prod only: the www name of the public site.
+# requires-var: MARKETING_WWW_HOST
+{{MARKETING_WWW_HOST}} {
+	import security
+	redir https://{{MARKETING_HOST}}{uri} 308
+}

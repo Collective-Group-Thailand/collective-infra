@@ -24,8 +24,10 @@
 	respond /api/metrics 404
 }
 
-# Owner console, staff PWA, platform admin: one Next.js app, zones by host (getproperty-web)
-{{OWNER_HOST}}, {{STAFF_HOST}}, {{ADMIN_HOST}} {
+# Owner console, staff PWA, platform admin: one Next.js app, zones by host (getproperty-web). MARKETING_HOST is the
+# platform's public site on the same app: getproperty-web serves the marketing pages there and 308s the rest to
+# OWNER_HOST (its MARKETING_HOST env, from the secret's WEB__MARKETING_HOST).
+{{MARKETING_HOST}}, {{OWNER_HOST}}, {{STAFF_HOST}}, {{ADMIN_HOST}} {
 	import getproperty_common
 	reverse_proxy getproperty-web:3000 {
 		header_up -X-Client-Cert-Sha256

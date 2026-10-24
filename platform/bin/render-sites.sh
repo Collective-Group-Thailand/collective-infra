@@ -42,6 +42,10 @@ for product, vars_ in sites.items():
         needs = [n for n in re.findall(r"^# requires-file: (\S+)$", text, re.M) if not (caddy_dir / n).exists()]
         if needs:
             print(f"skip {tmpl.name}: waiting for {needs}"); rendered.unlink(missing_ok=True); continue
+        # ... or a host only some environments have (e.g. prod's www name):  # requires-var: KEY
+        unset = [k for k in re.findall(r"^# requires-var: (\w+)$", text, re.M) if not vars_.get(k)]
+        if unset:
+            print(f"skip {tmpl.name}: {unset} not in {pathlib.Path(yml).name}"); rendered.unlink(missing_ok=True); continue
         missing = set(re.findall(r"{{(\w+)}}", text)) - set(vars_)
         if missing:
             sys.exit(f"{tmpl.name}: missing {sorted(missing)} in {yml}")
