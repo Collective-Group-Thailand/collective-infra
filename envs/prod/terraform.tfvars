@@ -41,9 +41,9 @@ products = {
     pdf_render_producers = ["getproperty"]
   }
   getproperty = {
-    # browser uploads (presigned PUT) from the owner console, staff PWA, admin and the LIFF app — TODO domain
-    cors_origins = ["https://app.getproperty.example", "https://staff.getproperty.example", "https://admin.getproperty.example", "https://liff.getproperty.example"]
-    ses_domain   = null # enable when the domain is decided (SES_FROM_ADDRESS no-reply@<domain>)
+    # browser uploads (presigned PUT) from the owner console, staff PWA, admin and the LIFF app
+    cors_origins = ["https://app.getproperty.app", "https://staff.getproperty.app", "https://admin.getproperty.app", "https://liff.getproperty.app"]
+    ses_domain   = "getproperty.app" # SES_FROM_ADDRESS getproperty <no-reply@getproperty.app>
     # one secret collective/<env>/getproperty/app; front-end keys prefixed WEB__ / LIFF__ (T-4, README §3)
     # signed OTA artefacts of getproperty-edge (releases/edge/<version>/<file>): read-only for the instance role,
     # uploaded with the release-publisher policy (getproperty-api docs/deployment.md §5a, D-231)
