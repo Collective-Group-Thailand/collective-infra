@@ -118,14 +118,19 @@ if [ -z "$ONLY" ] || [ "$ONLY" = getpack ]; then
         JWT_SIGNING_KEYS:$jwk, OTP_HMAC_SECRET:$otp, FIELD_ENCRYPTION_KEY:$fek, LOOKUP_HMAC_SECRET:$lookup,
         SES_FROM_ADDRESS:$from, SES_REGION:"ap-southeast-1",
         PDF_CHROMIUM_PATH:"/usr/bin/chromium",
-        PUBLIC_WEB_URL:$web,
+        PUBLIC_WEB_URL:$web, STOREFRONT_BASE_URL:$web,
         SENTRY_DSN:"", FIREBASE_PROJECT_ID:"", LINE_LOGIN_CHANNEL_ID:"",
         LINE_MESSAGING_CHANNEL_ACCESS_TOKEN:"", LINE_MESSAGING_CHANNEL_SECRET:"", LINE_MESSAGING_CHANNEL_ID:"",
         VAPID_PUBLIC_KEY:"", VAPID_PRIVATE_KEY:"", VAPID_SUBJECT:"",
-        THAIBULKSMS_API_KEY:"", THAIBULKSMS_API_SECRET:"", THAIBULKSMS_SENDER:""
+        THAIBULKSMS_API_KEY:"", THAIBULKSMS_API_SECRET:"", THAIBULKSMS_SENDER:"",
+        SCB_API_BASE_URL:"", SCB_API_KEY:"", SCB_API_SECRET:"", SCB_BILLER_ID:"", SCB_REF3_PREFIX:"",
+        SCB_MERCHANT_ID:"", SCB_TERMINAL_ID:"",
+        TWOC2P_BASE_URL:"", TWOC2P_API_VERSION:"", TWOC2P_MERCHANT_ID:"", TWOC2P_SECRET_KEY:"",
+        TWOC2P_PAYMENT_ACTION_URL:"", TWOC2P_MERCHANT_PRIVATE_KEY:"", TWOC2P_PUBLIC_KEY:"",
+        SLIP2GO_API_URL:"", SLIP2GO_SECRET_KEY:""
       }')
     put "$PREFIX/getpack/app" "$APP"
-    echo "  ! fill the empty third-party keys (LINE, ThaiBulkSMS, Firebase, VAPID, Sentry) in the console before the first real test"
+    echo "  ! fill the empty third-party keys (LINE, ThaiBulkSMS, Firebase, VAPID, Sentry, SCB, 2C2P, Slip2Go) before the first real test"
   else echo "  = $PREFIX/getpack/app (already set, kept)"; fi
 fi
 
