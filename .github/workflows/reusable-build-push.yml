@@ -37,6 +37,25 @@ on:
         description: "ubuntu-24.04-arm (GitHub-hosted arm64) or a self-hosted label"
         type: string
         default: "ubuntu-24.04-arm"
+      extra_repository:
+        description: "Optional second checkout (owner/name), e.g. a sibling package the Dockerfile builds from"
+        type: string
+        default: ""
+      extra_ref:
+        type: string
+        default: ""
+      extra_path:
+        description: "Where the second checkout goes, inside the workspace (keep it out of the image via .dockerignore)"
+        type: string
+        default: ".extra"
+      build_contexts:
+        description: "Newline-separated name=path named build contexts (docker build --build-context)"
+        type: string
+        default: ""
+    secrets:
+      extra_repository_token:
+        description: "Read token for extra_repository when it is private (until it is published as a package)"
+        required: false
     outputs:
       image_tag:
         value: ${{ jobs.build.outputs.image_tag }}
@@ -56,6 +75,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.sha }}
+
+      - uses: actions/checkout@v4
+        if: inputs.extra_repository != ''
+        with:
+          repository: ${{ inputs.extra_repository }}
+          ref: ${{ inputs.extra_ref }}
+          path: ${{ inputs.extra_path }}
+          token: ${{ secrets.extra_repository_token || github.token }}
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -88,6 +115,8 @@ jobs:
           build-args: |
             ${{ inputs.build_args }}
             ${{ vars.BUILD_ARGS }}
+          build-contexts: |
+            ${{ inputs.build_contexts }}
           secrets: |
             NODE_AUTH_TOKEN=${{ github.token }}
           cache-from: type=registry,ref=${{ steps.meta.outputs.registry }}/${{ inputs.image }}:buildcache

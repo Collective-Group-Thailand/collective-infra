@@ -63,6 +63,9 @@ resource "aws_s3_bucket_lifecycle_configuration" "assets" {
     }
   }
 
+  # Scratch objects (getproperty: the shared pdf-render queue's HTML / PDF under tmp/pdf-render/, which carry personal
+  # data — getproperty-api docs/pdf-render-queue.md §3: 1 day). The bucket is versioned, so the expired current version
+  # becomes noncurrent: that copy goes after the same number of days instead of the bucket-wide noncurrent_version_days.
   rule {
     id     = "tmp-prefix-expiry"
     status = "Enabled"
@@ -70,7 +73,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "assets" {
       prefix = "tmp/"
     }
     expiration {
-      days = 7
+      days = var.tmp_expiration_days
+    }
+    noncurrent_version_expiration {
+      noncurrent_days = var.tmp_expiration_days
     }
   }
 }
@@ -89,6 +95,9 @@ resource "aws_s3_bucket_cors_configuration" "assets" {
 }
 
 # --- Secrets Manager: shell only. Values are set by hand / rotation, never by Terraform -----------
+# Exactly ONE secret per product per environment (locked 2026-10-21). Component-only keys use a prefix
+# (<COMPONENT>__KEY, e.g. getproperty WEB__… / LIFF__…) that platform/bin/fetch-secrets.sh splits into the
+# component's own env file.
 resource "aws_secretsmanager_secret" "app" {
   name                    = "${local.secret_path}/app"
   description             = "${var.product} ${var.environment}: DATABASE_URL, REDIS_URL, JWT keys, 3rd-party API keys (JSON)"
@@ -173,6 +182,29 @@ data "aws_iam_policy_document" "product" {
     actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"]
     resources = ["${aws_s3_bucket.assets.arn}/*"]
   }
+  # Release artefacts (getproperty OTA, getproperty-api D-231) are served by the app but written only by a release
+  # engineer: an explicit deny wins over AssetsObjects, so a compromised container cannot replace a binary.
+  dynamic "statement" {
+    for_each = length(var.release_prefixes) > 0 ? [1] : []
+    content {
+      sid       = "ReleasesReadOnly"
+      effect    = "Deny"
+      actions   = ["s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion", "s3:AbortMultipartUpload", "s3:PutObjectTagging", "s3:PutObjectAcl"]
+      resources = [for p in var.release_prefixes : "${aws_s3_bucket.assets.arn}/${p}*"]
+    }
+  }
+  # Consumer of the shared pdf-render queue (getproperty-api docs/pdf-render-queue.md §6.4; getpack's worker): read the
+  # producer's HTML and write the PDF under tmp/pdf-render/ of each producer's bucket — nothing else of that bucket.
+  # The bucket name is built, not read from the other module instance (module.product is one for_each: referencing a
+  # sibling instance would be a cycle).
+  dynamic "statement" {
+    for_each = length(var.pdf_render_producers) > 0 ? [1] : []
+    content {
+      sid       = "PdfRenderProducerObjects"
+      actions   = ["s3:GetObject", "s3:PutObject"]
+      resources = [for p in var.pdf_render_producers : "arn:${data.aws_partition.current.partition}:s3:::${var.name_prefix}-${var.environment}-${p}-assets/tmp/pdf-render/*"]
+    }
+  }
   statement {
     sid       = "Secrets"
     actions   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
@@ -207,5 +239,34 @@ resource "aws_iam_policy" "product" {
   name        = "${local.name}-access"
   description = "Instance-role access for ${var.product} (${var.environment}): S3 assets, secrets, SES"
   policy      = data.aws_iam_policy_document.product.json
+  tags        = local.tags
+}
+
+# --- Release publisher: upload signed artefacts under release_prefixes (attach to the release engineer's identity,
+# never to the instance role or a CI role that also deploys) ----------------------------------------------------------
+data "aws_iam_policy_document" "release_publisher" {
+  count = length(var.release_prefixes) > 0 ? 1 : 0
+  statement {
+    sid       = "ReleasesList"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.assets.arn]
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = [for p in var.release_prefixes : "${p}*"]
+    }
+  }
+  statement {
+    sid       = "ReleasesWrite"
+    actions   = ["s3:PutObject", "s3:GetObject", "s3:GetObjectAttributes", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"]
+    resources = [for p in var.release_prefixes : "${aws_s3_bucket.assets.arn}/${p}*"]
+  }
+}
+
+resource "aws_iam_policy" "release_publisher" {
+  count       = length(var.release_prefixes) > 0 ? 1 : 0
+  name        = "${local.name}-release-publisher"
+  description = "Upload signed release artefacts for ${var.product} (${var.environment}) under ${join(", ", var.release_prefixes)}"
+  policy      = data.aws_iam_policy_document.release_publisher[0].json
   tags        = local.tags
 }

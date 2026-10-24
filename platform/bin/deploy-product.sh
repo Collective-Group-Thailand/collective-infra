@@ -38,6 +38,10 @@ if [ "$MIGRATE" = 1 ] && [ "$COMPONENT" = api ] && compose_product "$PRODUCT" --
   # `migrate` = same api image, one-shot. Migrations are expand/contract, so a failed migration
   # leaves the previous version serving; nothing to roll back.
   compose_product "$PRODUCT" run --rm --no-deps migrate || { log "migration failed"; restore_state; exit 1; }
+  # Product hook (optional), only after a successful migration: products/<product>/hooks/post-migrate.sh — e.g.
+  # getproperty drops the gp_mqtt role once its migration 0037 is applied. Idempotent; a failure only warns.
+  hook="$PRODUCT_DIR/hooks/post-migrate.sh"
+  if [ -x "$hook" ]; then "$hook" || log "WARN: $PRODUCT post-migrate hook failed"; fi
 fi
 
 compose_product "$PRODUCT" up -d --no-deps --wait --wait-timeout 180 "${SERVICES[@]}" \

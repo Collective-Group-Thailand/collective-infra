@@ -133,3 +133,25 @@ variable "snapshot_retention_count" {
   type    = number
   default = 7
 }
+
+variable "snapshot_copy_region" {
+  description = "Region that receives an encrypted copy of every daily data-volume snapshot (DLM cross-region copy); null = no copy"
+  type        = string
+  default     = null
+  validation {
+    condition     = var.snapshot_copy_region == null || can(regex("^[a-z]{2}-[a-z]+-[0-9]$", var.snapshot_copy_region))
+    error_message = "snapshot_copy_region must be an AWS region code such as ap-northeast-1"
+  }
+}
+
+variable "snapshot_copy_retention_days" {
+  description = "Days the cross-region snapshot copies are kept"
+  type        = number
+  default     = 7
+}
+
+variable "snapshot_copy_kms_key_arn" {
+  description = "KMS key in snapshot_copy_region for the copies (null = that region's default EBS key)"
+  type        = string
+  default     = null
+}

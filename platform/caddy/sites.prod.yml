@@ -3,9 +3,14 @@ getpack:
   API_HOST: api.getpack.co
   ADMIN_HOST: admin.getpack.co     # getpack-web admin zone (staff console)
   PARTNER_HOST: partner.getpack.co # getpack-web partner zone (factories)
-getproperty:
-  WEB_HOST: app.getproperty.example # TODO
+getproperty: # TODO domain (D-001: getproperty.co) — owner console, staff PWA, admin, LIFF, API, gateways, MQTT
+  OWNER_HOST: app.getproperty.example
+  STAFF_HOST: staff.getproperty.example
+  ADMIN_HOST: admin.getproperty.example
+  LIFF_HOST: liff.getproperty.example
   API_HOST: api.getproperty.example
+  DEVICE_HOST: device.getproperty.example
+  MQTT_HOST: mqtt.getproperty.example
 getbuild:
   WEB_HOST: app.getbuild.example # TODO domain
   API_HOST: api.getbuild.example

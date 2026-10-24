@@ -3,6 +3,11 @@ name: Promote image uat → prod
 # Re-tag one image currently deployed to UAT (or an explicit sha tag) as :prod and deploy it to
 # production. No rebuild: the bytes that passed UAT are the bytes that ship. Approval gate = the
 # `production` GitHub Environment.
+#
+# One component per run (each image ships from its own repo, so each has its own sha tag): getpack api | web,
+# getproperty api | web | liff, getbuild api. `api` runs the migration first. getproperty's front ends read every
+# environment value at run time (getproperty-web ADR-0009, getproperty-liff ADR-0007), so their UAT image is promotable;
+# getpack-web is not (NEXT_PUBLIC_* baked at build — see the note at the end).
 
 on:
   workflow_dispatch:
@@ -13,7 +18,7 @@ on:
         required: true
       component:
         type: choice
-        options: [api, web]
+        options: [api, web, liff]
         required: true
       image_tag:
         description: "sha-xxxxxxx to promote (leave empty = whatever :uat points at)"

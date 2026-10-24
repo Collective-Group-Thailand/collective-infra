@@ -25,6 +25,17 @@ variable "snapshot_retention_count" {
   default = 7
 }
 
+variable "snapshot_copy_region" {
+  description = "DLM cross-region copy target of the daily data-volume snapshot (null = none)"
+  type        = string
+  default     = null
+}
+
+variable "snapshot_copy_retention_days" {
+  type    = number
+  default = 7
+}
+
 variable "platform_hostname" {
   type = string
 }
@@ -56,12 +67,17 @@ variable "ecr_repositories" {
   type = list(string)
 }
 
+# Every attribute (release_prefixes, tmp_expiration_days, pdf_render_producers, …) must be listed here too, or the
+# type conversion drops it from terraform.tfvars
 variable "products" {
   type = map(object({
-    cors_origins    = optional(list(string), [])
-    ses_domain      = optional(string)
-    route53_zone_id = optional(string)
-    enable_sqs      = optional(bool, false)
+    cors_origins         = optional(list(string), [])
+    ses_domain           = optional(string)
+    route53_zone_id      = optional(string)
+    enable_sqs           = optional(bool, false)
+    release_prefixes     = optional(list(string), [])
+    tmp_expiration_days  = optional(number, 7)
+    pdf_render_producers = optional(list(string), [])
   }))
 }
 

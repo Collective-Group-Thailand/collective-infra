@@ -15,7 +15,7 @@ on:
         type: string
         required: true
       component:
-        description: "api | web — which image of the product (services using <product>/<component>)"
+        description: "api | web | liff — which image of the product (services using <product>/<component>)"
         type: string
         required: true
       environment:

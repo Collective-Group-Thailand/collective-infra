@@ -1,0 +1,79 @@
+# Template → caddy/sites/getproperty-device.caddy (bin/render-sites.sh). Rendered only once the platform device CA
+# exists (bin/render-device-ca.sh writes it); the owner/staff/admin, LIFF and API hosts in getproperty.caddy do not wait.
+# requires-file: sites/device-ca.pem
+# requires-file: sites/device-broker.pem
+
+(getproperty_device_internal_404) {
+	@getproperty_internal path /internal /internal/* /webhooks/integration /webhooks/integration/*
+	respond @getproperty_internal 404
+}
+
+# Gateways (getproperty-edge) over HTTPS: bootstrap (one-time code, no certificate yet), certificate renewal and the
+# device endpoints with their X.509 client certificate. Caddy verifies a presented certificate against the
+# platform device CA (collective/<env>/platform/device-ca, rendered by bin/render-device-ca.sh) and forwards only its SHA-256;
+# the API (DEVICE_MTLS_SOURCE=sha256_header) refuses /v1/device/* calls that need mTLS without it.
+{{DEVICE_HOST}} {
+	tls {
+		client_auth {
+			mode verify_if_given
+			trust_pool file /etc/caddy/sites/device-ca.pem
+		}
+	}
+	import security
+	import getproperty_device_internal_404
+	respond /metrics 404
+	# OTA artefacts (getproperty-api D-231, deployment.md §5a): streamed by the API from the private bucket
+	# (releases/edge/…) to the authenticated gateway; GET/HEAD only and a long upstream read timeout because the
+	# download is paced by the building's uplink. Must stay before @device (handle blocks run in written order).
+	@ota_artifact {
+		path /v1/device/ota/artifacts/*
+		method GET HEAD
+	}
+	handle @ota_artifact {
+		reverse_proxy getproperty-api:3000 {
+			header_up X-Client-Cert-Sha256 {http.request.tls.client.fingerprint}
+			transport http {
+				read_timeout 10m
+			}
+		}
+	}
+	@device path /v1/device/* /health
+	handle @device {
+		request_body {
+			max_size 8MB
+		}
+		reverse_proxy getproperty-api:3000 {
+			header_up X-Client-Cert-Sha256 {http.request.tls.client.fingerprint}
+			transport http {
+				read_timeout 60s
+			}
+		}
+	}
+	handle {
+		respond 404
+	}
+}
+
+# MQTT_HOST: DNS name of the broker. MQTT itself is EMQX's mTLS listener on :8883 (published by the platform compose
+# file). On 443 this site is the WSS fallback for buildings that block 8883 (getproperty O-012, resolved 2026-10-21 as
+# recommended): wss://{{MQTT_HOST}}/mqtt → EMQX ws listener, where the gateway authenticates with its device JWT alone
+# (no client certificate on this path; EMQX HTTP authn on getproperty-api). The site serves the device-CA broker
+# certificate (bin/render-device-ca.sh), not Let's Encrypt, so gateways verify 8883 and WSS against the same
+# caChainPem of their bootstrap. Set MQTT_PUBLIC_WS_URL=wss://{{MQTT_HOST}}/mqtt in getproperty/app to offer it.
+{{MQTT_HOST}} {
+	tls /etc/caddy/sites/device-broker.pem /etc/caddy/sites/device-broker.key
+	import security
+	import getproperty_device_internal_404
+	handle /mqtt {
+		reverse_proxy platform-emqx-1:8083 {
+			# a Caddy reload (render-sites.sh) keeps open WebSockets for 10 min instead of dropping every gateway at once
+			stream_close_delay 10m
+		}
+	}
+	handle /health {
+		respond "getproperty mqtt: mqtts://{{MQTT_HOST}}:8883 (mTLS), wss://{{MQTT_HOST}}/mqtt (device JWT)" 200
+	}
+	handle {
+		respond 404
+	}
+}

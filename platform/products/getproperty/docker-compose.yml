@@ -1,47 +1,144 @@
-# getproperty on the shared box. Deployed with: bin/deploy-product.sh getproperty <tag>
-# Env files (merged by compose_product in bin/lib.sh): /etc/collective/platform.env + /var/lib/collective/getproperty.env (API_TAG / WEB_TAG)
-# App secrets: /run/collective/getproperty.env (rendered from Secrets Manager collective/<env>/getproperty/app)
+# getproperty on the shared box. Deployed per component — each image ships from its own repo:
+#   bin/deploy-product.sh getproperty api  <tag>   → api, worker, ingest (+ migrate one-shot, post-migrate hook)
+#   bin/deploy-product.sh getproperty web  <tag>   → web  (getproperty-web: owner console, staff PWA, admin)
+#   bin/deploy-product.sh getproperty liff <tag>   → liff (getproperty-liff)
+# Env files (compose_product in bin/lib.sh): /etc/collective/platform.env + platform/env/<env>.env (knobs)
+#   + /var/lib/collective/getproperty.env (API_TAG / WEB_TAG / LIFF_TAG) + getproperty.hosts.env (render-sites.sh).
+# A component never deployed has no tag (`:none`) and is not started.
+# App secrets: /run/collective/getproperty.env (rendered from Secrets Manager collective/<env>/getproperty/app;
+# the keys are listed in getproperty-api docs/deployment.md §3 — the app does not call Secrets Manager itself).
+# Cross-product events (getproperty-api D-238, D-247), keys of that secret, per partner P = GETBUILD | GETPACK:
+#   INTEGRATION_<P>_TRANSPORT    none (default: events wait in bridge.integration_event) | webhook | sns
+#   INTEGRATION_<P>_WEBHOOK_URL  the partner's receiver on the docker network — getbuild:
+#                                http://getbuild-api:3000/webhooks/integration/getproperty; getpack:
+#                                http://getpack-api:3000/webhooks/integration/getproperty
+#   INTEGRATION_<P>_SIGNING_KEYS getproperty's HMAC keys toward P (≥ 32 chars, comma-separated, first = current)
+#   INTEGRATION_<P>_VERIFY_KEYS  P's keys accepted on http://getproperty-api:3000/webhooks/integration/<getbuild|getpack>
+# Both directions stay on the `collective` network; Caddy answers 404 for /webhooks/integration/* on public hosts. A
+# partner on another box uses `sns` (INTEGRATION_<P>_SNS_TOPIC_ARN, SQS on the receiving side) — never a public route.
 #
-# Memory budget: web 512M · api 512M · worker 768M (billing PDFs rendered via getpack pdf-render queue when available)
+# Images (getproperty-api docs/deployment.md §2): one api image, four commands — main (:3000 /health /metrics),
+# worker (:3001), ingest (:3001 in its own container, INGEST_HEALTH_PORT — image contract, T-10), migrate (one-shot:
+# asset-core core schema → prisma/migrations → TimescaleDB step → reference seed). The image's entrypoint runs the
+# given command, so `command:` below is authoritative.
+#
+# Memory budget (locked 2026-10-21: getproperty ≈ 1.8 GB on the 16 GB prod box; getproperty-api D-233, T-11):
+#   api 512M · worker 512M · ingest 192M · web 384M · liff 192M = 1,792 MB   (migrate 512M one-shot, not steady state)
+# Interim (getproperty O-015, resolved 2026-10-21 as recommended; getproperty-api D-236 + ADR-0012): until getpack's
+# shared `pdf-render` consumer is deployed, getproperty renders its PDFs with its own Chromium in the worker, which
+# then gets 1.5 GB — GETPROPERTY_WORKER_MEMORY (default 1536M below) → getproperty = 2,816 MB. When the queue is live:
+# set GETPROPERTY_PDF_RENDERER_MODE=queue and GETPROPERTY_WORKER_MEMORY=512M in platform/env/<env>.env, then make 512M
+# the default here and drop shm_size. ClamAV is the platform's shared service (T-2, counted in the platform's ≈ 6 GB).
+# uat (t4g.large, 8 GB) runs the same limits (UAT proves them under load); every project's ceilings together exceed
+# 8 GB there, accepted because limits are ceilings, not reservations (platform/env/uat.env sizes PostgreSQL down).
 name: getproperty
 
 networks:
   collective:
     external: true
 
+# Settings every api-image container shares. NOTE: a service's own `environment:` replaces this map (YAML merge is
+# shallow), so every service repeats the anchor below with `<<: *api-env` instead of redefining it.
+x-api-env: &api-env
+  NODE_ENV: production
+  TZ: Asia/Bangkok
+  APP_ENV: ${COLLECTIVE_ENV}
+  INTEGRATIONS_MODE: real
+  DATA_STORES_MODE: real
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
+  OTEL_SERVICE_NAMESPACE: getproperty
+  AWS_REGION: ${AWS_REGION}
+  S3_BUCKET: collective-${COLLECTIVE_ENV}-getproperty-assets
+  S3_FORCE_PATH_STYLE: "false"
+  # The box renders collective/<env>/getproperty/app into the env file; the app must not read it again.
+  AWS_SECRETS_ID: ""
+  # EMQX inside the docker network (plain MQTT on the internal listener; devices use the mTLS listener)
+  MQTT_URL: mqtt://emqx:1883
+  MQTT_PROTOCOL_VERSION: "5"
+  MQTT_SHARED_SUBSCRIPTION: "true"
+  # Client IP (D-229): Caddy is the one proxy that appends X-Forwarded-For (it replaces the header of untrusted
+  # clients); the BFFs reach the API over the `collective` network (daemon.json pool 172.30.0.0/16).
+  TRUST_PROXY: "1"
+  TRUSTED_PROXY_CIDRS: 172.30.0.0/16
+  METRICS_ALLOWED_CIDRS: 172.30.0.0/16,127.0.0.0/8
+  # Gateways' mTLS on /v1/device/*: Caddy verifies the certificate on DEVICE_HOST and forwards its SHA-256.
+  DEVICE_MTLS_SOURCE: sha256_header
+  DEVICE_MTLS_HEADER: x-client-cert-sha256
+  # PDFs (getproperty-api D-236, D-242, ADR-0012, docs/pdf-render-queue.md): GETPROPERTY_PDF_RENDERER_MODE
+  # (platform/env/<env>.env) → the image's PDF_RENDERER_MODE: `real` = its own Chromium in the worker (interim),
+  # `queue` = the shared BullMQ queue `pdf-render` consumed by getpack's worker. Queue mode reads
+  # PDF_RENDER_REDIS_URL from the env file: hooks/post-secrets.sh derives it from REDIS_URL with the platform's
+  # shared-queue logical DB 15 (PLATFORM_QUEUES_VALKEY_DB in bin/lib.sh) — never getproperty's own DB, or getpack's
+  # consumer would not see the jobs. Not set here: `environment:` would override the env file.
+  PDF_RENDERER_MODE: ${GETPROPERTY_PDF_RENDERER_MODE:-real}
+  PDF_RENDER_QUEUE_PREFIX: collective
+  PDF_CHROMIUM_EXECUTABLE: /usr/bin/chromium
+  # Per-merchant / per-tenant provider credentials are sealed rows in PostgreSQL (getproperty-api D-240), entered by
+  # the platform admin; the former *_SECRETS_PREFIX lines are gone. ORDER on a box that still holds the sub-path
+  # secrets collective/<env>/getproperty/{payments,locks,etax}/…: first import, passing the prefixes on the command
+  # line (README §3 "Provider credentials"), check its report, then delete the sub-path secrets — never the other way
+  # round. PROVIDER_CREDENTIALS_LEGACY_SECRETS stays unset (false).
+  # Upload virus scan (required in production): the platform's shared clamd (platform/docker-compose.yml, T-2)
+  CLAMAV_HOST: clamav
+  CLAMAV_PORT: "3310"
+
 x-api-base: &api-base
   image: ${ECR_REGISTRY}/getproperty/api:${API_TAG:-none}
   env_file: /run/collective/getproperty.env
-  environment:
-    NODE_ENV: production
-    PORT: "3000"
-    TZ: Asia/Bangkok
-    OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
-    OTEL_SERVICE_NAMESPACE: getproperty
-    AWS_REGION: ${AWS_REGION}
-    S3_BUCKET: collective-${COLLECTIVE_ENV}-getproperty-assets
-    MQTT_URL: mqtt://platform-emqx-1:1883
   networks: [collective]
   restart: unless-stopped
-  init: false # image already uses tini
+  init: false # the image already uses tini
 
 services:
+  # Owner console, staff PWA, platform admin (one Next.js app, host-based zones)
   web:
     image: ${ECR_REGISTRY}/getproperty/web:${WEB_TAG:-none}
     container_name: getproperty-web
-    env_file: /run/collective/getproperty.env
+    env_file: /run/collective/getproperty-web.env
     environment:
       NODE_ENV: production
       PORT: "3000"
       HOSTNAME: 0.0.0.0
+      TZ: Asia/Bangkok
       API_INTERNAL_URL: http://getproperty-api:3000 # server-side BFF → API over the docker network
+      TRUSTED_HOPS: "1" # Caddy appends one X-Forwarded-For entry (it drops the header of untrusted clients)
       OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
       OTEL_SERVICE_NAME: getproperty-web
     networks: [collective]
     restart: unless-stopped
     deploy:
       resources:
-        limits: { memory: 512M }
+        limits: { memory: 384M }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    labels:
+      collective.metrics: "true"
+      collective.metrics.port: "3000"
+      collective.metrics.path: "/api/metrics"
+
+  # Resident LINE Mini App (LIFF) + technicians / landlords — getproperty-liff
+  liff:
+    image: ${ECR_REGISTRY}/getproperty/liff:${LIFF_TAG:-none}
+    container_name: getproperty-liff
+    env_file: /run/collective/getproperty-liff.env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      TZ: Asia/Bangkok
+      API_INTERNAL_URL: http://getproperty-api:3000
+      TRUSTED_HOPS: "1"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
+      OTEL_SERVICE_NAME: getproperty-liff
+    networks: [collective]
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: { memory: 192M }
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/healthz >/dev/null || exit 1"]
       interval: 30s
@@ -56,14 +153,18 @@ services:
   api:
     <<: *api-base
     container_name: getproperty-api
+    command: ["node", "dist/src/main.js"]
     environment:
-      NODE_ENV: production
+      <<: *api-env
       PORT: "3000"
-      TZ: Asia/Bangkok
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
       OTEL_SERVICE_NAME: getproperty-api
-      AWS_REGION: ${AWS_REGION}
-      S3_BUCKET: collective-${COLLECTIVE_ENV}-getproperty-assets
+      # EMQX HTTP authn/authz (getproperty-api D-244, POST /internal/emqx/{authn,authz}): only callers on the
+      # `collective` network (EMQX) — narrower than the image default (loopback + every private range, which would
+      # include the VPC). Requests relayed by Caddy carry the internet client's address and get 404 (Caddy answers
+      # 404 for /internal/* itself). EMQX_AUTH_TOKEN comes from hooks/post-secrets.sh.
+      EMQX_HTTP_ALLOWED_CIDRS: 172.30.0.0/16,127.0.0.0/8
+      # EMQX_SERVICE_USERNAMES (optional, product secret): getproperty's users on the internal listener that authz
+      # allows below gp/v1/ (incl. $share/<group>/…); unset = MQTT_USERNAME, the one user api / worker / ingest share.
     deploy:
       resources:
         limits: { memory: 512M }
@@ -78,22 +179,21 @@ services:
       collective.metrics.port: "3000"
       collective.metrics.path: "/metrics"
 
-  # BullMQ consumers: meter ingest rollups (EMQX → API → TimescaleDB), billing runs, notifications
+  # BullMQ: outbox relay + subscribers, billing cycles, notifications, documents (PDFs: own Chromium until
+  # pdf-render), workflow timers
   worker:
     <<: *api-base
     container_name: getproperty-worker
     command: ["node", "dist/src/worker.js"]
     environment:
-      NODE_ENV: production
-      TZ: Asia/Bangkok
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
+      <<: *api-env
+      WORKER_HEALTH_PORT: "3001"
       OTEL_SERVICE_NAME: getproperty-worker
-      AWS_REGION: ${AWS_REGION}
-      S3_BUCKET: collective-${COLLECTIVE_ENV}-getproperty-assets
-      WORKER_CONCURRENCY: "4"
+    shm_size: 256m # Chromium (interim, O-015)
     deploy:
       resources:
-        limits: { memory: 768M }
+        # O-015 interim (own Chromium, ADR-0012 in getproperty-api): 1.5 GB; 512M once PDF_RENDERER_MODE=queue
+        limits: { memory: "${GETPROPERTY_WORKER_MEMORY:-1536M}" }
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 30s
@@ -105,12 +205,45 @@ services:
       collective.metrics.port: "3001"
       collective.metrics.path: "/metrics"
 
-  # One-shot: `prisma migrate deploy`. Not started by `up` (profile), only by deploy-product.sh.
+  # MQTT shared subscription on EMQX → telemetry, health, readings (smart meters). Exactly one replica on the box.
+  ingest:
+    <<: *api-base
+    container_name: getproperty-ingest
+    command: ["node", "dist/src/ingest.js"]
+    environment:
+      <<: *api-env
+      INGEST_HEALTH_PORT: "3001" # image contract: worker-type health on :3001 (own container, T-10)
+      OTEL_SERVICE_NAME: getproperty-ingest
+      MQTT_CLIENT_ID_PREFIX: getproperty-ingest
+    deploy:
+      resources:
+        limits: { memory: 192M }
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    labels:
+      collective.metrics: "true"
+      collective.metrics.port: "3001"
+      collective.metrics.path: "/metrics"
+
+  # One-shot, run by deploy-product.sh before `up` (profile, never started by `up`). Not `npx prisma migrate deploy`:
+  # getproperty's `core` schema comes from @collective/asset-core and must migrate first; the image's runner applies
+  # it, then prisma/migrations (recorded in _prisma_migrations exactly like Prisma), then the optional TimescaleDB
+  # step (D-162), then the idempotent reference seed (SEED_REFERENCE) — no Prisma CLI in the image. It runs as the
+  # NOCREATEROLE product login (roles from postgres/init/20-getproperty.sh).
   migrate:
     <<: *api-base
-    command: ["sh", "-c", "corepack enable >/dev/null 2>&1 || true; npx prisma migrate deploy"]
+    command: ["node", "dist/src/migrate.js"]
+    environment:
+      <<: *api-env
+      TIMESCALEDB_MIGRATION: auto
+      SEED_REFERENCE: "true"
+      OTEL_SERVICE_NAME: getproperty-migrate
     restart: "no"
     profiles: ["tools"]
     deploy:
       resources:
-        limits: { memory: 768M }
+        limits: { memory: 512M }

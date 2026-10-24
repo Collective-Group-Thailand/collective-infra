@@ -23,23 +23,32 @@ out_dir = caddy_dir / "sites"
 for product, vars_ in sites.items():
     # hosts also go to the product's compose (e.g. getpack-web needs PUBLIC_HOST/ADMIN_HOST/PARTNER_HOST)
     (state_dir / f"{product}.hosts.env").write_text("".join(f"{k}={v}\n" for k, v in vars_.items()))
-    tmpl = caddy_dir / "templates" / f"{product}.caddy"
-    rendered = out_dir / f"{product}.caddy"
+    # one or more templates per product: <product>.caddy and optional <product>-<part>.caddy
+    templates = sorted((caddy_dir / "templates").glob(f"{product}.caddy")) + \
+                sorted((caddy_dir / "templates").glob(f"{product}-*.caddy"))
+    stale = list(out_dir.glob(f"{product}.caddy")) + list(out_dir.glob(f"{product}-*.caddy"))
     # Placeholder domains (*.example, RFC 2606) cannot get certificates; serving them only makes
     # Caddy retry ACME forever. The product goes live once real hostnames are in sites.<env>.yml.
     if any(v.endswith(".example") for v in vars_.values()):
-        rendered.unlink(missing_ok=True)
+        for f in stale: f.unlink(missing_ok=True)
         print(f"skip {product}: placeholder hostnames"); continue
-    if not tmpl.exists():
+    if not templates:
         print(f"skip {product}: no template"); continue
-    text = tmpl.read_text()
-    missing = set(re.findall(r"{{(\w+)}}", text)) - set(vars_)
-    if missing:
-        sys.exit(f"{product}: missing {sorted(missing)} in {yml}")
-    for k, v in vars_.items():
-        text = text.replace("{{%s}}" % k, v)
-    rendered.write_text(text)
-    print(f"rendered {product}.caddy")
+    for tmpl in templates:
+        rendered = out_dir / tmpl.name
+        text = tmpl.read_text()
+        # A template may need a file a product hook renders first (e.g. a client-CA bundle):
+        #   # requires-file: sites/<name>   (relative to caddy/). Skipped — not broken — until it exists.
+        needs = [n for n in re.findall(r"^# requires-file: (\S+)$", text, re.M) if not (caddy_dir / n).exists()]
+        if needs:
+            print(f"skip {tmpl.name}: waiting for {needs}"); rendered.unlink(missing_ok=True); continue
+        missing = set(re.findall(r"{{(\w+)}}", text)) - set(vars_)
+        if missing:
+            sys.exit(f"{tmpl.name}: missing {sorted(missing)} in {yml}")
+        for k, v in vars_.items():
+            text = text.replace("{{%s}}" % k, v)
+        rendered.write_text(text)
+        print(f"rendered {tmpl.name}")
 PY
 
 if docker ps --format '{{.Names}}' | grep -q '^platform-caddy-1$'; then
