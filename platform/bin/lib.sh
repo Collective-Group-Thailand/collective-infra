@@ -32,6 +32,10 @@ json_to_env() {
 }
 
 compose_platform() {
+  # config hashes → `collective.config` labels (see docker-compose.yml header)
+  h() { (cd "$PLATFORM_DIR" && cat "$@" 2>/dev/null) | sha256sum | cut -c1-12; }
+  export CFG_CADDY=$(h Caddyfile) CFG_ALLOY=$(h alloy/config.alloy) CFG_CLAMAV=$(h clamav/clamd.conf) \
+         CFG_POSTGRES=$(h postgres/postgresql.conf postgres/pg_hba.conf postgres/pgbackrest.conf)
   # Alloy (profile "observability") runs only once Grafana Cloud credentials exist
   if grep -qE "^GRAFANA_PROMETHEUS_URL='?https" "$RUN_DIR/platform.secrets.env" 2>/dev/null; then
     export COMPOSE_PROFILES=observability

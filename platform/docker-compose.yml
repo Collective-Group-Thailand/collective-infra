@@ -1,4 +1,7 @@
-# Shared platform services for one Collective box. Products attach to the `collective` network
+# Shared platform services for one Collective box.
+# Config files are bind-mounted one by one; a `git reset` replaces them with new inodes the running container never
+# sees. Each service therefore carries a `collective.config` label = hash of its files (bin/lib.sh compose_platform),
+# so `up -d` recreates exactly the services whose config changed. Products attach to the `collective` network
 # and are deployed as separate compose projects (platform/products/<product>/docker-compose.yml).
 #
 #   docker compose --env-file /etc/collective/platform.env --env-file /run/collective/platform.secrets.env up -d
@@ -38,6 +41,8 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    labels:
+      collective.config: "${CFG_CADDY:-}"
     logging:
       options: { tag: "platform/caddy" }
 
@@ -85,6 +90,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+    labels:
+      collective.config: "${CFG_POSTGRES:-}"
     logging:
       options: { tag: "platform/postgres" }
 
@@ -162,7 +169,7 @@ services:
   # clamd over TCP for every product's upload pipeline. Signatures ship in the image and freshclam keeps
   # them current in /data/clamav. First start loads ~1.2 GB of signatures (≈1 min) before answering.
   clamav:
-    image: clamav/clamav:1.4
+    image: clamav/clamav-debian:1.4 # the Alpine clamav/clamav image has no arm64 build
     restart: unless-stopped
     volumes:
       - ./clamav/clamd.conf:/etc/clamav/clamd.conf:ro
@@ -172,6 +179,8 @@ services:
     deploy:
       resources:
         limits: { memory: 2G }
+    labels:
+      collective.config: "${CFG_CLAMAV:-}"
     logging:
       options: { tag: "platform/clamav" }
 
@@ -210,5 +219,7 @@ services:
     deploy:
       resources:
         limits: { memory: 384M }
+    labels:
+      collective.config: "${CFG_ALLOY:-}"
     logging:
       options: { tag: "platform/alloy" }
