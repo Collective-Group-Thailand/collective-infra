@@ -4,7 +4,6 @@
 	import security
 	import compress
 	reverse_proxy getbuild-web:3000 {
-		header_up X-Forwarded-Proto {scheme}
 	}
 }
 
@@ -15,7 +14,6 @@
 		max_size 32MB
 	}
 		reverse_proxy getbuild-api:3000 {
-		header_up X-Forwarded-Proto {scheme}
 		transport http {
 			read_timeout 120s # BOQ/PDF exports
 		}

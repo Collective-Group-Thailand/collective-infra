@@ -8,7 +8,6 @@
 
 	# Next.js BFF handles /api/* itself; everything goes to the web container
 	reverse_proxy getpack-web:3000 {
-		header_up X-Forwarded-Proto {scheme}
 		transport http {
 			read_timeout 60s
 		}
@@ -28,7 +27,6 @@ www.{{WEB_HOST}} {
 	}
 
 	reverse_proxy getpack-api:3000 {
-		header_up X-Forwarded-Proto {scheme}
 		transport http {
 			read_timeout 120s # PDF/preflight endpoints
 		}

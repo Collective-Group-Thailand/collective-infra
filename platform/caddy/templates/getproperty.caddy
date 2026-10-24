@@ -4,7 +4,6 @@
 	import security
 	import compress
 	reverse_proxy getproperty-web:3000 {
-		header_up X-Forwarded-Proto {scheme}
 	}
 }
 
@@ -16,7 +15,6 @@
 	}
 	# Edge devices (getproperty-edge) post telemetry here; keep timeouts short
 	reverse_proxy getproperty-api:3000 {
-		header_up X-Forwarded-Proto {scheme}
 		transport http {
 			read_timeout 60s
 		}

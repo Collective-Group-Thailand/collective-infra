@@ -4,9 +4,9 @@
 {
 	email {$ACME_EMAIL}
 	admin 0.0.0.0:2019
+	metrics
 	servers {
 		trusted_proxies static private_ranges
-		metrics
 	}
 	log {
 		output stdout
