@@ -70,7 +70,7 @@ jobs:
             --document-name AWS-RunShellScript \
             --comment "deploy ${{ inputs.product }}/${{ inputs.component }} ${{ inputs.image_tag }} (${{ github.repository }}@${GITHUB_SHA::7})" \
             --timeout-seconds 900 \
-            --parameters '{"commands":["/opt/collective/platform/bin/deploy-product.sh ${{ inputs.product }} ${{ inputs.component }} ${{ inputs.image_tag }} ${{ inputs.migrate && '' || '--no-migrate' }}"],"executionTimeout":["900"]}' \
+            --parameters '{"commands":["/opt/collective/platform/bin/deploy-product.sh ${{ inputs.product }} ${{ inputs.component }} ${{ inputs.image_tag }} ${{ !inputs.migrate && '--no-migrate' || '' }}"],"executionTimeout":["900"]}' \
             --query Command.CommandId --output text)
           echo "command_id=$id" >> "$GITHUB_OUTPUT"
 
