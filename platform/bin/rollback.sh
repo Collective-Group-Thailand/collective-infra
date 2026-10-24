@@ -13,6 +13,8 @@ if [ -z "$PREV" ] || [ "$PREV" = "$CUR" ]; then
   # first deploy of this component: nothing older to return to → stop it rather than leave it crash-looping
   log "no previous $PRODUCT/$COMPONENT tag; stopping ${SERVICES[*]}"
   compose_product "$PRODUCT" stop "${SERVICES[@]}" || true
+  # forget the failed tag so a reboot does not start it again and the next deploy starts clean
+  state_set "$PRODUCT" "$VAR" ""; state_set "$PRODUCT" "PREVIOUS_$VAR" ""
   exit 1
 fi
 
