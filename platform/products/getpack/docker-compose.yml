@@ -6,7 +6,7 @@
 #   + /var/lib/collective/getpack.hosts.env  (WEB_HOST / ADMIN_HOST / PARTNER_HOST / API_HOST, from render-sites.sh)
 # App secrets (api + worker only): /run/collective/getpack.env, rendered from Secrets Manager collective/<env>/getpack/app
 #
-# Memory budget (16 GB box): web 512M · api 1.5G · worker 2G (Chromium) · migrate transient
+# Memory budget (16 GB box): web 512M · api 1.5G · worker 2G (Chromium) · migrate/scripts 1.5G transient
 # NODE_OPTIONS sets the V8 heap explicitly: Node's default (≈half the cgroup limit) OOM-killed the api at ~315 MB.
 name: getpack
 
@@ -59,6 +59,7 @@ services:
       TZ: Asia/Bangkok
       OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
       OTEL_SERVICE_NAME: getpack-api
+      CLAMAV_HOST: clamav # platform clamd; uploads stay pending without it
       AWS_REGION: ${AWS_REGION}
       S3_BUCKET: collective-${COLLECTIVE_ENV}-getpack-assets
       NODE_OPTIONS: --max-old-space-size=1024
@@ -83,6 +84,7 @@ services:
       TZ: Asia/Bangkok
       OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-alloy-1:4318
       OTEL_SERVICE_NAME: getpack-worker
+      CLAMAV_HOST: clamav # platform clamd; uploads stay pending without it
       AWS_REGION: ${AWS_REGION}
       S3_BUCKET: collective-${COLLECTIVE_ENV}-getpack-assets
       WORKER_CONCURRENCY: "4"
@@ -95,14 +97,17 @@ services:
 
   # One-shot: `prisma migrate deploy` (Prisma CLI bundled at /opt/prisma-cli in the api image).
   # Not started by `up` (profile); run by deploy-product.sh before api/worker are replaced.
+  # Also the runner for one-off scripts on the box (seeds, photo imports):
+  #   compose_product getpack run --rm --no-deps migrate node dist/scripts/<script>.js …
   migrate:
     <<: *api-base
     command: ["/opt/prisma-cli/node_modules/.bin/prisma", "migrate", "deploy", "--config", "/opt/prisma-cli/prisma.config.ts"]
     environment:
       NODE_ENV: production
-      NODE_OPTIONS: --max-old-space-size=640
+      NODE_OPTIONS: --max-old-space-size=1024 # scripts boot the whole AppModule
+      CLAMAV_HOST: clamav
     restart: "no"
     profiles: ["tools"]
     deploy:
       resources:
-        limits: { memory: 768M }
+        limits: { memory: 1536M }

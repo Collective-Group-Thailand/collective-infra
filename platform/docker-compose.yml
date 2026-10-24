@@ -4,6 +4,7 @@
 #   docker compose --env-file /etc/collective/platform.env --env-file /run/collective/platform.secrets.env up -d
 #
 # Memory limits are the contract that lets three products share 16 GB (PLAN.md). Keep them.
+# Platform total: caddy 256M · postgres 4G · valkey 512M · emqx 512M · clamav 2G · alloy 384M ≈ 7.7 GB.
 name: platform
 
 networks:
@@ -156,6 +157,23 @@ services:
       retries: 5
     logging:
       options: { tag: "platform/emqx" }
+
+  # ------------------------------------------------------------------ malware scanning (uploads)
+  # clamd over TCP for every product's upload pipeline. Signatures ship in the image and freshclam keeps
+  # them current in /data/clamav. First start loads ~1.2 GB of signatures (≈1 min) before answering.
+  clamav:
+    image: clamav/clamav:1.4
+    restart: unless-stopped
+    volumes:
+      - ./clamav/clamd.conf:/etc/clamav/clamd.conf:ro
+      - /data/clamav:/var/lib/clamav
+    networks: [collective]
+    expose: ["3310"]
+    deploy:
+      resources:
+        limits: { memory: 2G }
+    logging:
+      options: { tag: "platform/clamav" }
 
   # ------------------------------------------------------------------ observability agent
   alloy:

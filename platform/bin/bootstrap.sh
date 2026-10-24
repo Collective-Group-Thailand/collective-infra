@@ -13,7 +13,7 @@ systemctl daemon-reload
 systemctl enable collective-platform.service
 systemctl enable --now pgbackrest-backup.timer mqtt-cert-sync.timer secrets-refresh.timer
 
-mkdir -p /data/pgbackrest-spool && chown 1000:1000 /data/pgbackrest-spool
+mkdir -p /data/pgbackrest-spool /data/clamav && chown 1000:1000 /data/pgbackrest-spool
 
 # 2. secrets + Caddy sites
 bin/fetch-secrets.sh platform
