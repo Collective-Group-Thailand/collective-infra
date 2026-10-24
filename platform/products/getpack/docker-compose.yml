@@ -105,6 +105,9 @@ services:
     environment:
       NODE_ENV: production
       NODE_OPTIONS: --max-old-space-size=1024 # scripts boot the whole AppModule
+      TZ: Asia/Bangkok
+      AWS_REGION: ${AWS_REGION}
+      S3_BUCKET: collective-${COLLECTIVE_ENV}-getpack-assets
       CLAMAV_HOST: clamav
     restart: "no"
     profiles: ["tools"]
