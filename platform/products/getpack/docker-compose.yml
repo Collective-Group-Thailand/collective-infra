@@ -6,7 +6,8 @@
 #   + /var/lib/collective/getpack.hosts.env  (WEB_HOST / ADMIN_HOST / PARTNER_HOST / API_HOST, from render-sites.sh)
 # App secrets (api + worker only): /run/collective/getpack.env, rendered from Secrets Manager collective/<env>/getpack/app
 #
-# Memory budget (16 GB box): web 512M · api 640M · worker 2G (Chromium) · migrate transient
+# Memory budget (16 GB box): web 512M · api 1.5G · worker 2G (Chromium) · migrate transient
+# NODE_OPTIONS sets the V8 heap explicitly: Node's default (≈half the cgroup limit) OOM-killed the api at ~315 MB.
 name: getpack
 
 networks:
@@ -60,9 +61,10 @@ services:
       OTEL_SERVICE_NAME: getpack-api
       AWS_REGION: ${AWS_REGION}
       S3_BUCKET: collective-${COLLECTIVE_ENV}-getpack-assets
+      NODE_OPTIONS: --max-old-space-size=1024
     deploy:
       resources:
-        limits: { memory: 640M }
+        limits: { memory: 1536M }
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 30s
@@ -85,6 +87,7 @@ services:
       S3_BUCKET: collective-${COLLECTIVE_ENV}-getpack-assets
       WORKER_CONCURRENCY: "4"
       PDF_CONCURRENCY: "2"
+      NODE_OPTIONS: --max-old-space-size=1280 # leaves ~700 MB of the 2G for Chromium
     shm_size: 256m # Chromium
     deploy:
       resources:
@@ -97,6 +100,7 @@ services:
     command: ["/opt/prisma-cli/node_modules/.bin/prisma", "migrate", "deploy", "--config", "/opt/prisma-cli/prisma.config.ts"]
     environment:
       NODE_ENV: production
+      NODE_OPTIONS: --max-old-space-size=640
     restart: "no"
     profiles: ["tools"]
     deploy:
