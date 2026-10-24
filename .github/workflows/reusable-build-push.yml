@@ -83,8 +83,11 @@ jobs:
           tags: |
             ${{ steps.meta.outputs.registry }}/${{ inputs.image }}:${{ steps.meta.outputs.sha_tag }}
             ${{ steps.meta.outputs.registry }}/${{ inputs.image }}:${{ inputs.moving_tag }}
+          # inputs.build_args (from the caller) + the GitHub Environment variable BUILD_ARGS (per env, e.g. the
+          # public NEXT_PUBLIC_* values of production) — public values only; secrets never go into an image.
           build-args: |
             ${{ inputs.build_args }}
+            ${{ vars.BUILD_ARGS }}
           secrets: |
             NODE_AUTH_TOKEN=${{ github.token }}
           cache-from: type=registry,ref=${{ steps.meta.outputs.registry }}/${{ inputs.image }}:buildcache
