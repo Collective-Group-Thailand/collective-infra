@@ -4,10 +4,12 @@
 # so `up -d` recreates exactly the services whose config changed. Products attach to the `collective` network
 # and are deployed as separate compose projects (platform/products/<product>/docker-compose.yml).
 #
-#   docker compose --env-file /etc/collective/platform.env --env-file /run/collective/platform.secrets.env up -d
+#   docker compose --env-file /etc/collective/platform.env --env-file env/<env>.env --env-file /run/collective/platform.secrets.env up -d
+#   (bin/lib.sh compose_platform does exactly this)
 #
 # Memory limits are the contract that lets three products share 16 GB (PLAN.md). Keep them.
-# Platform total: caddy 256M · postgres 4G · valkey 512M · emqx 512M · clamav 2G · alloy 384M ≈ 7.7 GB.
+# Platform budget (limits, not reservations): caddy 256M · postgres ${POSTGRES_MEMORY_LIMIT} (prod 3,328M) · valkey 512M ·
+# emqx 512M · alloy 384M · clamav ${CLAMAV_MEMORY_LIMIT} (1,536M; ~1.2 GB of signatures resident). Per-env knobs: platform/env/<env>.env.
 name: platform
 
 networks:
@@ -84,7 +86,7 @@ services:
     expose: ["5432"]
     deploy:
       resources:
-        limits: { memory: "${POSTGRES_MEMORY_LIMIT:-4g}" }
+        limits: { memory: "${POSTGRES_MEMORY_LIMIT:-3328m}" } # shared_buffers 1GB (postgresql.conf)
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -h 127.0.0.1"]
       interval: 10s
@@ -103,6 +105,8 @@ services:
       - valkey-server
       - --requirepass
       - ${VALKEY_PASSWORD}
+      - --databases
+      - "16" # 0–14 one per product, 15 = shared platform queues (pdf-render) — bin/lib.sh PLATFORM_QUEUES_VALKEY_DB
       - --maxmemory
       - ${VALKEY_MAXMEMORY:-384mb}
       - --maxmemory-policy
@@ -130,28 +134,90 @@ services:
     logging:
       options: { tag: "platform/valkey" }
 
-  # ------------------------------------------------------------------ MQTT (getproperty IoT)
+  # ------------------------------------------------------------------ MQTT (shared broker)
+  # EMQX is the platform broker (getproperty-api D-235). Listeners:
+  #  - ssl:default 8883, PUBLIC — IoT gateways, mutual TLS against the platform device CA (bin/render-device-ca.sh,
+  #    collective/<env>/platform/device-ca); the server certificate comes from the same CA because gateways trust only
+  #    the caChainPem of their bootstrap (not Let's Encrypt). Zone `devices`: the certificate CN (gw-<gatewayId>)
+  #    becomes username and client id. Authentication: HTTP → getproperty-api, CN + device JWT as password.
+  #  - tcp:default 1883, INTERNAL (docker network only, never published) — product services; password users from the
+  #    built-in database (getproperty's MQTT_USERNAME via products/getproperty/hooks/post-secrets.sh).
+  #  - ws:default 8083, INTERNAL, public only through Caddy as wss://<MQTT_HOST>/mqtt (device-CA broker certificate)
+  #    — the WSS fallback for buildings that block 8883 (getproperty O-012, resolved 2026-10-21 as recommended): no
+  #    client certificate on this path, the gateway is authenticated by its device JWT alone (≤ 1 h, issued only over
+  #    mTLS to a non-retired gateway). The HTTP body says which path (`transport` "mtls" | "ws").
+  # Authorization: file (platform-wide denies, emqx/platform-acl.conf) → HTTP getproperty-api (`gp/v1/#` is
+  # getproperty's namespace; it answers "ignore" for anything else) → no_match = deny, deny_action = disconnect.
+  # The HTTP calls carry x-emqx-auth-token (GETPROPERTY_EMQX_AUTH_TOKEN ← platform/emqx `getproperty_auth_token`);
+  # /internal/* is docker-network only and Caddy answers 404 for it on every public host. With the API down the
+  # hooks fail closed (a failed call counts as "ignore", so no authenticator allows): gateways keep their readings
+  # (store-and-forward) and reconnect with back-off. Body field names are those of getproperty-api's
+  # EmqxAuthnRequest / EmqxAuthzRequest (src/core/devices/emqx-auth.service.ts, checked against 74bdcdc): authn
+  # transport, clientid, username, password, cert_common_name, cert_subject, peerhost; authz username, clientid,
+  # topic, action, qos, retain, peerhost. Env values in HOCON (listener chains, sources) — UNVERIFIED against a
+  # running EMQX 5.8 (no Docker here).
   emqx:
     image: emqx/emqx:5.8
     restart: unless-stopped
-    # TLS on 8883 uses the Let's Encrypt cert Caddy obtains for ${MQTT_HOSTNAME};
-    # bin/sync-mqtt-cert.sh (systemd timer) copies it into /data/emqx/certs and reloads the listener.
     ports:
       - "8883:8883"
     environment:
       EMQX_NODE__NAME: emqx@emqx.collective
       EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD}
+      EMQX_MQTT__MAX_PACKET_SIZE: 1MB # ≥ 256 KB for 200-reading telemetry batches
       EMQX_LISTENERS__TCP__DEFAULT__BIND: "0.0.0.0:1883" # containers only (not published)
       EMQX_LISTENERS__SSL__DEFAULT__BIND: "0.0.0.0:8883"
-      EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CERTFILE: /opt/emqx/data/certs/fullchain.pem
-      EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__KEYFILE: /opt/emqx/data/certs/privkey.pem
-      EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__VERIFY: verify_none # devices authenticate with username/password
-      EMQX_LISTENERS__WS__DEFAULT__BIND: "0.0.0.0:8083"              # Caddy → wss for browsers
+      EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CERTFILE: /opt/emqx/data/certs/device/server.pem
+      EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__KEYFILE: /opt/emqx/data/certs/device/server.key
+      EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CACERTFILE: /opt/emqx/data/certs/device/ca.pem
+      EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__VERIFY: verify_peer
+      EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__FAIL_IF_NO_PEER_CERT: "true"
+      EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__VERSIONS: '["tlsv1.3","tlsv1.2"]'
+      EMQX_LISTENERS__SSL__DEFAULT__ZONE: devices
+      EMQX_ZONES__DEVICES__MQTT__PEER_CERT_AS_USERNAME: cn
+      EMQX_ZONES__DEVICES__MQTT__PEER_CERT_AS_CLIENTID: cn
+      EMQX_LISTENERS__SSL__DEFAULT__ENABLE_AUTHN: "true"
+      EMQX_LISTENERS__SSL__DEFAULT__AUTHENTICATION: >-
+        [{mechanism = password_based, backend = http, method = post,
+          url = "http://getproperty-api:3000/internal/emqx/authn",
+          headers {"content-type" = "application/json", "x-emqx-auth-token" = "${GETPROPERTY_EMQX_AUTH_TOKEN:-}"},
+          body {transport = "mtls", clientid = "$${clientid}", username = "$${username}", password = "$${password}",
+                cert_common_name = "$${cert_common_name}", cert_subject = "$${cert_subject}", peerhost = "$${peerhost}"},
+          request_timeout = "5s", pool_size = 8}]
+      EMQX_LISTENERS__WS__DEFAULT__BIND: "0.0.0.0:8083"
+      EMQX_LISTENERS__WS__DEFAULT__ENABLE_AUTHN: "true"
+      EMQX_LISTENERS__WS__DEFAULT__AUTHENTICATION: >-
+        [{mechanism = password_based, backend = http, method = post,
+          url = "http://getproperty-api:3000/internal/emqx/authn",
+          headers {"content-type" = "application/json", "x-emqx-auth-token" = "${GETPROPERTY_EMQX_AUTH_TOKEN:-}"},
+          body {transport = "ws", clientid = "$${clientid}", username = "$${username}", password = "$${password}",
+                cert_common_name = "", cert_subject = "", peerhost = "$${peerhost}"},
+          request_timeout = "5s", pool_size = 4}]
       EMQX_LISTENERS__WSS__DEFAULT__ENABLE: "false"
-      EMQX_ALLOW_ANONYMOUS: "false"
+      # 1883 (global chain): password users in the built-in database, seeded from the bootstrap file on a fresh data dir
+      EMQX_AUTHENTICATION__1__MECHANISM: password_based
+      EMQX_AUTHENTICATION__1__BACKEND: built_in_database
+      EMQX_AUTHENTICATION__1__USER_ID_TYPE: username
+      EMQX_AUTHENTICATION__1__PASSWORD_HASH_ALGORITHM__NAME: sha256
+      EMQX_AUTHENTICATION__1__PASSWORD_HASH_ALGORITHM__SALT_POSITION: suffix
+      EMQX_AUTHENTICATION__1__BOOTSTRAP_FILE: /opt/emqx/data/getproperty/users.json
+      EMQX_AUTHENTICATION__1__BOOTSTRAP_TYPE: plain
+      EMQX_AUTHORIZATION__NO_MATCH: deny
+      EMQX_AUTHORIZATION__DENY_ACTION: disconnect
+      EMQX_AUTHORIZATION__CACHE__ENABLE: "true"
+      EMQX_AUTHORIZATION__CACHE__TTL: 1m # a retired gateway loses its topics within a minute (the API also kicks it)
+      EMQX_AUTHORIZATION__SOURCES: >-
+        [{type = file, enable = true, path = "/opt/emqx/etc/platform-acl.conf"},
+         {type = http, enable = true, method = post,
+          url = "http://getproperty-api:3000/internal/emqx/authz",
+          headers {"content-type" = "application/json", "x-emqx-auth-token" = "${GETPROPERTY_EMQX_AUTH_TOKEN:-}"},
+          body {username = "$${username}", clientid = "$${clientid}", topic = "$${topic}", action = "$${action}",
+                qos = "$${qos}", retain = "$${retain}", peerhost = "$${peerhost}"},
+          request_timeout = "5s", pool_size = 8}]
       # Prometheus stats are scraped by Alloy at /api/v5/prometheus/stats; push-gateway stays off (default)
     volumes:
       - /data/emqx:/opt/emqx/data
+      - ./emqx/platform-acl.conf:/opt/emqx/etc/platform-acl.conf:ro
     networks: [collective]
     expose: ["1883", "8083", "18083"]
     deploy:
@@ -162,12 +228,17 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
+    labels:
+      collective.config: "${CFG_EMQX:-}"
     logging:
       options: { tag: "platform/emqx" }
 
-  # ------------------------------------------------------------------ malware scanning (uploads)
-  # clamd over TCP for every product's upload pipeline. Signatures ship in the image and freshclam keeps
-  # them current in /data/clamav. First start loads ~1.2 GB of signatures (≈1 min) before answering.
+  # ------------------------------------------------------------------ upload virus scan (shared)
+  # One clamd for every product on the box (getproperty-api D-233 / blueprint T-2): INSTREAM on 3310, reachable only on
+  # the `collective` network as `clamav:3310` (CLAMAV_HOST / CLAMAV_PORT in a product compose file). freshclam
+  # runs inside the image and updates the signatures in /data/clamav. clamd.conf sets ConcurrentDatabaseReload no so a
+  # signature reload does not hold two databases in memory (scans wait ~30-60 s during a reload instead); the steady
+  # RSS of the full database is ≈ 1.2 GB (measured on UAT, 2026-10-24).
   clamav:
     image: clamav/clamav-debian:1.4 # the Alpine clamav/clamav image has no arm64 build
     restart: unless-stopped
@@ -178,7 +249,13 @@ services:
     expose: ["3310"]
     deploy:
       resources:
-        limits: { memory: 2G }
+        limits: { memory: "${CLAMAV_MEMORY_LIMIT:-1536m}" }
+    healthcheck:
+      test: ["CMD-SHELL", "clamdcheck.sh || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 300s # first signature download on a fresh /data/clamav
     labels:
       collective.config: "${CFG_CLAMAV:-}"
     logging:

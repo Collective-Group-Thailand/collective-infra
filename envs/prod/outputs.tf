@@ -29,3 +29,7 @@ output "platform_secret_names" {
 output "ses_dns_records" {
   value = module.stack.ses_dns_records
 }
+
+output "release_publisher_policy_arns" {
+  value = module.stack.release_publisher_policy_arns
+}

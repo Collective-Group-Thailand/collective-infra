@@ -36,7 +36,8 @@
 		respond "ok" 200
 	}
 
-	# Browser MQTT over WSS (getproperty web dashboards)
+	# EMQX ws listener (8083). Its only authenticator today is getproperty's gateway JWT check (D-235); gateways use
+	# wss://<MQTT_HOST>/mqtt (device-CA certificate) — this path is kept for future browser clients of the platform.
 	handle /mqtt* {
 		reverse_proxy emqx:8083
 	}

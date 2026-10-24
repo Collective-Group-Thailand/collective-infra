@@ -59,3 +59,33 @@ variable "ses_region" {
   type        = string
   default     = "ap-southeast-1"
 }
+
+variable "release_prefixes" {
+  description = "Bucket prefixes holding signed release artefacts (e.g. getproperty \"releases/\"): the instance role may only read them; writes need the separate release-publisher policy"
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for p in var.release_prefixes : can(regex("^[a-z0-9][a-z0-9-]*/$", p)) && p != "tmp/"])
+    error_message = "release_prefixes are top-level prefixes ending in / (not tmp/)"
+  }
+}
+
+variable "tmp_expiration_days" {
+  description = "Lifecycle expiry (current and noncurrent versions) of objects under tmp/ in the assets bucket"
+  type        = number
+  default     = 7
+  validation {
+    condition     = var.tmp_expiration_days >= 1 && var.tmp_expiration_days <= 30 && floor(var.tmp_expiration_days) == var.tmp_expiration_days
+    error_message = "tmp_expiration_days is a whole number of days, 1-30"
+  }
+}
+
+variable "pdf_render_producers" {
+  description = "Products whose shared pdf-render jobs this product consumes (getpack's worker): s3:GetObject + s3:PutObject on collective-<env>-<producer>-assets/tmp/pdf-render/* only"
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for p in var.pdf_render_producers : can(regex("^[a-z][a-z0-9-]{2,20}$", p))])
+    error_message = "pdf_render_producers are product slugs"
+  }
+}

@@ -19,12 +19,28 @@ mkdir -p /data/pgbackrest-spool /data/clamav && chown 1000:1000 /data/pgbackrest
 bin/fetch-secrets.sh platform
 bin/render-sites.sh
 
+# 2b. EMQX's device listener files must exist before EMQX starts (it refuses to boot on a missing certfile):
+#     fetch-secrets.sh platform rendered them from collective/<env>/platform/device-ca, or a throwaway placeholder.
+#     getproperty's secrets (its internal MQTT user) are rendered when the product is already set up.
+ensure_device_tls_placeholder
+if [ -d "$PLATFORM_DIR/products/getproperty" ]; then
+  mkdir -p /data/emqx/getproperty
+  bin/fetch-secrets.sh getproperty || log "getproperty secrets not ready yet"
+  [ -s /data/emqx/getproperty/users.json ] || echo '[]' > /data/emqx/getproperty/users.json
+  chown -R 1000:1000 /data/emqx/getproperty
+fi
+
 # 3. ECR login (instance role) so platform/product pulls work
 aws ecr get-login-password --region "$AWS_REGION" \
   | docker login --username AWS --password-stdin "$ECR_REGISTRY" >/dev/null
 
 # 4. shared services
 compose_platform pull --quiet
+# shared ClamAV: freshclam writes /data/clamav as the image's `clamav` user (ids taken from the image itself)
+mkdir -p /data/clamav
+if ids=$(docker run --rm --entrypoint sh clamav/clamav-debian:1.4 -c 'echo "$(id -u clamav):$(id -g clamav)"' 2>/dev/null); then
+  chown "$ids" /data/clamav
+fi
 compose_platform up -d --remove-orphans
 log "waiting for postgres…"
 for i in $(seq 1 60); do
@@ -51,7 +67,7 @@ for f in "$STATE_DIR"/*.env; do
   [[ "$p" == *.* ]] && continue   # <product>.hosts.env etc.
   [ -d "$PLATFORM_DIR/products/$p" ] || continue
   bin/fetch-secrets.sh "$p" || { log "WARN: $p secrets failed"; continue; }
-  for c in api web; do
+  for c in api web liff; do
     [ -n "$(state_get "$p" "$(tr '[:lower:]' '[:upper:]' <<<"$c")_TAG")" ] || continue
     mapfile -t svcs < <(component_services "$p" "$c")
     [ "${#svcs[@]}" -gt 0 ] || continue

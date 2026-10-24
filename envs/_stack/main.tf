@@ -92,6 +92,9 @@ resource "aws_secretsmanager_secret" "platform" {
     "emqx",       # {"dashboard_password": "...", "api_key": "...", "api_secret": "..."}
     "grafana",    # {"prometheus_url","prometheus_user","loki_url","loki_user","tempo_url","tempo_user","api_key"}
     "caddy",      # {"acme_email": "..."}
+    # Device CA for IoT gateways (getproperty-api D-235): {"ca_chain_pem","issuing_cert_pem","issuing_key_pem",
+    # "broker_cert_pem","broker_key_pem"} — rendered for EMQX's 8883 listener, Caddy's device host and getproperty-api
+    "device-ca",
   ])
   name                    = "${local.secrets_prefix}/platform/${each.value}"
   recovery_window_in_days = var.environment == "prod" ? 30 : 7
@@ -99,19 +102,24 @@ resource "aws_secretsmanager_secret" "platform" {
 }
 
 # --- Products --------------------------------------------------------------------------------------
+# tmp_expiration_days / pdf_render_producers: the shared pdf-render queue (getproperty-api docs/pdf-render-queue.md) —
+# tmp/ expires after 1 day on a producer's bucket; the consumer (getpack) may Get/Put its tmp/pdf-render/* only.
 module "product" {
-  for_each        = var.products
-  source          = "../../modules/product"
-  providers       = { aws = aws, aws.ses = aws.ses }
-  ses_region      = var.ses_region
-  name_prefix     = var.name_prefix
-  environment     = var.environment
-  region          = var.region
-  product         = each.key
-  cors_origins    = each.value.cors_origins
-  ses_domain      = each.value.ses_domain
-  route53_zone_id = each.value.route53_zone_id
-  enable_sqs      = each.value.enable_sqs
+  for_each             = var.products
+  source               = "../../modules/product"
+  providers            = { aws = aws, aws.ses = aws.ses }
+  ses_region           = var.ses_region
+  name_prefix          = var.name_prefix
+  environment          = var.environment
+  region               = var.region
+  product              = each.key
+  cors_origins         = each.value.cors_origins
+  ses_domain           = each.value.ses_domain
+  route53_zone_id      = each.value.route53_zone_id
+  enable_sqs           = each.value.enable_sqs
+  release_prefixes     = each.value.release_prefixes
+  tmp_expiration_days  = each.value.tmp_expiration_days
+  pdf_render_producers = [for p in each.value.pdf_render_producers : p if p != each.key]
 }
 
 # --- App server ------------------------------------------------------------------------------------
@@ -138,6 +146,8 @@ module "app_server" {
   alert_emails                 = var.alert_emails
   enable_instance_check_reboot = !var.schedule.enabled
   snapshot_retention_count     = var.snapshot_retention_count
+  snapshot_copy_region         = var.snapshot_copy_region
+  snapshot_copy_retention_days = var.snapshot_copy_retention_days
 }
 
 # --- Office-hours schedule (UAT) -------------------------------------------------------------------
