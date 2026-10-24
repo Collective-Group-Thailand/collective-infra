@@ -35,7 +35,9 @@ API="${H}api.$D" DEVICE="${H}device.$D" MQTT="${H}mqtt.$D"
 for c in aws jq; do command -v "$c" >/dev/null || { echo "missing: $c"; exit 1; }; done
 # OpenSSL 3 (macOS ships LibreSSL, which lacks Ed25519 keys and -addext): Homebrew's openssl@3 when present
 for o in openssl /opt/homebrew/opt/openssl@3/bin/openssl /usr/local/opt/openssl@3/bin/openssl; do
-  if command -v "$o" >/dev/null && "$o" version | grep -q '^OpenSSL 3'; then OPENSSL="$o"; break; fi
+  p=$(command -v "$o" 2>/dev/null) || continue
+  # absolute path: the openssl() wrapper below must not call itself
+  if "$p" version | grep -q '^OpenSSL 3'; then OPENSSL="$p"; break; fi
 done
 [ -n "${OPENSSL:-}" ] || { echo "needs OpenSSL 3 (macOS: brew install openssl@3)"; exit 1; }
 openssl() { "$OPENSSL" "$@"; }
