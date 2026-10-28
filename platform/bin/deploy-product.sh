@@ -33,7 +33,14 @@ log "services: ${SERVICES[*]}"
 restore_state() { state_set "$PRODUCT" "$VAR" "${PREV:-}"; }
 compose_product "$PRODUCT" pull --quiet "${SERVICES[@]}" || { log "pull failed"; restore_state; exit 1; }
 
-if [ "$MIGRATE" = 1 ] && [ "$COMPONENT" = api ] && compose_product "$PRODUCT" --profile tools config --services | grep -qx migrate; then
+# Service list captured first: under pipefail, `compose … | grep -q` can exit 141 (SIGPIPE when grep quits early)
+# and silently skip migrations — getpack UAT, sha-2e5c3de, 2026-10-27. A config error now fails the deploy.
+TOOLS_SERVICES=""
+if [ "$MIGRATE" = 1 ] && [ "$COMPONENT" = api ]; then
+  TOOLS_SERVICES=$(compose_product "$PRODUCT" --profile tools config --services) \
+    || { log "compose config failed"; restore_state; exit 1; }
+fi
+if grep -qx migrate <<<"$TOOLS_SERVICES"; then
   log "running migrations"
   # `migrate` = same api image, one-shot. Migrations are expand/contract, so a failed migration
   # leaves the previous version serving; nothing to roll back.
