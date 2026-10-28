@@ -122,7 +122,7 @@ install_device_tls() {
   fi
   if [ "$changed" = 1 ]; then
     log "device TLS updated from $src"
-    if docker ps --format '{{.Names}}' | grep -q '^platform-emqx-1$'; then
+    if grep -q '^platform-emqx-1$' <<<"$(docker ps --format '{{.Names}}')"; then
       compose_platform exec -T emqx emqx ctl listeners restart ssl:default >/dev/null || compose_platform restart emqx
     fi
   fi

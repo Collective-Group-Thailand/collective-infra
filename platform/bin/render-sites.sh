@@ -55,7 +55,7 @@ for product, vars_ in sites.items():
         print(f"rendered {tmpl.name}")
 PY
 
-if docker ps --format '{{.Names}}' | grep -q '^platform-caddy-1$'; then
+if grep -q '^platform-caddy-1$' <<<"$(docker ps --format '{{.Names}}')"; then
   compose_platform exec -T caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null
   compose_platform exec -T caddy caddy reload --config /etc/caddy/Caddyfile
   log "caddy reloaded"
