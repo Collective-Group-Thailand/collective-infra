@@ -38,7 +38,7 @@
 |---|---|---|
 | `platform` | ≈ 6 GB (6,144 MB) | caddy 256M · postgres 3,328M · valkey 512M · emqx 512M · alloy 384M · clamav 1,152M |
 | getpack | 3.2 GB | web 512M · api 640M · worker 2G (the box's one Chromium, `pdf-render` consumer) |
-| getproperty | ≈ 1.8 GB (1,792 MB) | api 512M · worker 512M · ingest 192M · web 384M · liff 192M (migrate 512M one-shot). **Interim** (O-015, ADR-0012): worker 1.5 GB with its own Chromium until getpack's `pdf-render` consumer is deployed → 2,816 MB (`GETPROPERTY_WORKER_MEMORY`, `GETPROPERTY_PDF_RENDERER_MODE` in `platform/env/<env>.env`) |
+| getproperty | ≈ 2.1 GB (2,112 MB) | api 512M · worker 512M · ingest 512M (getproperty-api O-037) · web 384M · liff 192M (migrate 512M one-shot). **Interim** (O-015, ADR-0012): worker 1.5 GB with its own Chromium until getpack's `pdf-render` consumer is deployed → 2,816 MB (`GETPROPERTY_WORKER_MEMORY`, `GETPROPERTY_PDF_RENDERER_MODE` in `platform/env/<env>.env`) |
 | getbuild | ≈ 1.5 GB | api 512M · worker 1G |
 
 ส่วนที่เหลือ (≈ 3.5 GB) = OS + page cache. Knobs ที่ไม่ใช่ secret ต่อ env อยู่ใน `platform/env/<env>.env` (PR-reviewed).

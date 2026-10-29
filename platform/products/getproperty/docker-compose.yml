@@ -23,10 +23,10 @@
 # given command, so `command:` below is authoritative.
 #
 # Memory budget (locked 2026-10-21: getproperty ≈ 1.8 GB on the 16 GB prod box; getproperty-api D-233, T-11):
-#   api 512M · worker 512M · ingest 192M · web 384M · liff 192M = 1,792 MB   (migrate 512M one-shot, not steady state)
+#   api 512M · worker 512M · ingest 512M · web 384M · liff 192M = 2,112 MB   (migrate 512M one-shot, not steady state)
 # Interim (getproperty O-015, resolved 2026-10-21 as recommended; getproperty-api D-236 + ADR-0012): until getpack's
 # shared `pdf-render` consumer is deployed, getproperty renders its PDFs with its own Chromium in the worker, which
-# then gets 1.5 GB — GETPROPERTY_WORKER_MEMORY (default 1536M below) → getproperty = 2,816 MB. When the queue is live:
+# then gets 1.5 GB — GETPROPERTY_WORKER_MEMORY (default 1536M below) → getproperty = 3,136 MB. When the queue is live:
 # set GETPROPERTY_PDF_RENDERER_MODE=queue and GETPROPERTY_WORKER_MEMORY=512M in platform/env/<env>.env, then make 512M
 # the default here and drop shm_size. ClamAV is the platform's shared service (T-2, counted in the platform's ≈ 6 GB).
 # uat (t4g.large, 8 GB) runs the same limits (UAT proves them under load); every project's ceilings together exceed
@@ -217,7 +217,7 @@ services:
       MQTT_CLIENT_ID_PREFIX: getproperty-ingest
     deploy:
       resources:
-        limits: { memory: 192M }
+        limits: { memory: 512M } # was 192M: the full module graph OOM-killed it at boot on UAT (getproperty-api O-037, D-233 amendment)
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 30s
