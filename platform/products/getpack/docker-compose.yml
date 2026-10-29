@@ -37,6 +37,8 @@ services:
       API_INTERNAL_URL: http://getpack-api:3000
       TRUSTED_PROXY_HOPS: "1" # Caddy
       SENTRY_ENVIRONMENT: ${COLLECTIVE_ENV}
+      # getpack-web feature flags (read per request; off unless 1), set per environment in env/<env>.env
+      FEATURE_PACKAGING_LANDINGS: ${GETPACK_FEATURE_PACKAGING_LANDINGS:-0}
     networks: [collective]
     restart: unless-stopped
     deploy:
