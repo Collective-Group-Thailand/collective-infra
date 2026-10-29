@@ -31,6 +31,11 @@ mapfile -t SERVICES < <(component_services "$PRODUCT" "$COMPONENT")
 log "services: ${SERVICES[*]}"
 
 restore_state() { state_set "$PRODUCT" "$VAR" "${PREV:-}"; }
+# Free disk before the pull (getpack UAT, sha-5da4ce1, 2026-10-29: "no space left on device" — tagged sha-* images are
+# never dangling, so the prune after a deploy never removed them). -a drops every image no container uses: the
+# serving version (the rollback point) is in use and stays; until=2h keeps images built in the last two hours, e.g.
+# one another product's deploy has pulled but not started yet.
+docker image prune -af --filter "until=2h" >/dev/null || true
 compose_product "$PRODUCT" pull --quiet "${SERVICES[@]}" || { log "pull failed"; restore_state; exit 1; }
 
 # Service list captured first: under pipefail, `compose … | grep -q` can exit 141 (SIGPIPE when grep quits early)
